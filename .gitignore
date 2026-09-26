@@ -1,0 +1,10 @@
+.env
+node_modules
+./apps/api/src/.env
+./apps/web/src/.env
+./package-lock.json
+./apps/api/package-lock.json
+./apps/web/package-lock.json
+./docs/*.md
+./apps/web/node_modules
+./apps/api/node_modules
