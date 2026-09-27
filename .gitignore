@@ -1,10 +1,31 @@
+# Environment variables
 .env
-node_modules
-./apps/api/src/.env
-./apps/web/src/.env
-./package-lock.json
-./apps/api/package-lock.json
-./apps/web/package-lock.json
-./docs/*.md
-./apps/web/node_modules
-./apps/api/node_modules
+.env*.local
+*.env
+apps/api/src/.env
+apps/web/src/.env
+
+# Dependencies
+node_modules/
+apps/web/node_modules/
+apps/api/node_modules/
+
+# Lock files
+package-lock.json
+
+# Markdown & Documentation files
+ARCHITECTURE.md
+DECISIONS.md
+DESIGN.md
+MEMORY.md
+PRD.md
+PRICING.md
+RULES.md
+SECURITY.md
+TASKS.md
+TEST_PLAN.md
+TODO.md
+*.md
+!README.md
+!apps/**/README.md
+!packages/**/README.md

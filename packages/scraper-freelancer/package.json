@@ -1,0 +1,10 @@
+{
+  "name": "@lead-discovery/scraper-freelancer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "dependencies": {
+    "@lead-discovery/scraper-core": "*"
+  }
+}

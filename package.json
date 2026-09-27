@@ -1,13 +1,28 @@
 {
-  "name": "multi-source-lead-discovery",
+  "name": "multi-scraper-lead-discovery",
   "version": "1.0.0",
   "private": true,
+  "description": "Multi-Scraper Lead Discovery Dashboard and Background Scraping Engines",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "workers/*"
   ],
   "scripts": {
-    "dev:web": "npm run dev -w apps/web",
-    "dev:api": "npm run dev -w apps/api"
-  }
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:api": "node apps/api/src/server.js",
+    "build:web": "npm --prefix apps/web run build",
+    "test": "node --test tests/**/*.test.mjs apps/web/tests/**/*.test.mjs",
+    "lint": "npm --prefix apps/web run lint"
+  },
+  "keywords": [
+    "lead-discovery",
+    "scraper",
+    "geoapify",
+    "crawlee",
+    "playwright",
+    "react"
+  ],
+  "author": "",
+  "license": "ISC"
 }

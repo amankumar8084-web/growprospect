@@ -1,33 +1,19 @@
 {
-  "name": "api",
+  "name": "@lead-discovery/api",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "type": "module",
+  "main": "src/server.js",
   "scripts": {
-    "dev": "nodemon src/index.js",
-    "start": "node src/index.js",
-    "migrate": "node src/db/migrate.js",
-    "test": "jest"
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
   },
-  "keywords": [],
-  "type": "commonjs",
   "dependencies": {
-    "@clerk/express": "^2.1.72",
-    "axios": "^1.20.0",
-    "cheerio": "^1.2.0",
-    "cors": "^2.8.6",
-    "country-state-city": "^3.2.1",
-    "csv-parse": "^7.0.3",
-    "dotenv": "^18.0.4",
-    "express": "^5.2.1",
-    "multer": "^2.4.0",
-    "pg": "^8.23.0",
-    "xlsx": "^0.18.5",
-    "zod": "^4.6.5"
-  },
-  "devDependencies": {
-    "jest": "^30.5.2",
-    "nodemon": "^3.1.14",
-    "supertest": "^7.3.0"
+    "@lead-discovery/scraper-business": "*",
+    "@lead-discovery/scraper-core": "*",
+    "@lead-discovery/scraper-freelancer": "*",
+    "@lead-discovery/scraper-hiring": "*",
+    "@lead-discovery/scraper-website": "*",
+    "pg": "^8.23.0"
   }
 }

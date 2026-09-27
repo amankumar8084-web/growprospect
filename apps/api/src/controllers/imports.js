@@ -184,8 +184,9 @@ const commitImport = async (req, res) => {
           // Insert new lead
           await client.query(
             `INSERT INTO leads (
-              source, source_record_id, name, company_name, email, phone, website, linkedin_url, address, import_batch_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              source, source_record_id, name, company_name, email, phone, website, linkedin_url, address, import_batch_id,
+              lead_type, job_title, maps_url, country, state, city, website_status, notes
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
             [
               source,
               record.source_record_id || null,
@@ -196,7 +197,15 @@ const commitImport = async (req, res) => {
               record.website || null,
               record.linkedin_url || null,
               record.address || null,
-              batchId
+              batchId,
+              record.lead_type || null,
+              record.job_title || null,
+              record.maps_url || null,
+              record.country || null,
+              record.state || null,
+              record.city || null,
+              record.website_status || null,
+              record.notes || null
             ]
           );
           insertedCount++;
