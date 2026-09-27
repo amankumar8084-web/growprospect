@@ -14,11 +14,13 @@ import {
   ShieldCheck, 
   Code,
   Layers,
-  ArrowUpRight
+  ArrowUpRight,
+  Trash2
 } from 'lucide-react';
 
-export default function LeadDetailDrawer({ lead, onClose }) {
+export default function LeadDetailDrawer({ lead, onClose, onDeleteLead }) {
   const [copied, setCopied] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   if (!lead) return null;
 
@@ -26,6 +28,13 @@ export default function LeadDetailDrawer({ lead, onClose }) {
     navigator.clipboard.writeText(JSON.stringify(lead, null, 2));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleDelete = () => {
+    if (onDeleteLead) {
+      onDeleteLead(lead.id);
+      onClose();
+    }
   };
 
   return (
@@ -122,10 +131,18 @@ export default function LeadDetailDrawer({ lead, onClose }) {
             <h3 className="text-xs font-mono font-semibold text-[#111111] uppercase tracking-wider">
               Source Attribution & Traceability
             </h3>
-            <div className="p-3 rounded border border-[#E7E7E7] bg-white space-y-2 text-xs font-mono">
-              <div className="flex justify-between">
+            <div className="p-3.5 rounded-xl border border-[#E7E7E7] bg-white space-y-2.5 text-xs font-mono">
+              <div className="flex justify-between items-center">
                 <span className="text-[#8A8A8A]">Scraper Engine:</span>
-                <span className="text-[#111111] font-semibold">{lead.source}</span>
+                <span className="px-2 py-0.5 rounded bg-[#111111] text-white font-semibold text-[11px]">
+                  {lead.scraperName || lead.scraperId || 'No-Website Business Finder'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[#8A8A8A]">API Provider / Source:</span>
+                <span className="px-2 py-0.5 rounded bg-[#FFF5F0] text-[#EA4B0B] border border-[#FFE2D5] font-semibold text-[11px]">
+                  {lead.source || 'Active Location Provider'}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[#8A8A8A]">Associated Run:</span>
@@ -191,21 +208,52 @@ export default function LeadDetailDrawer({ lead, onClose }) {
         </div>
 
         {/* Drawer Footer */}
-        <div className="p-4 border-t border-[#E7E7E7] bg-[#F5F5F5] flex items-center justify-between">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-white hover:bg-[#E7E7E7] border border-[#E7E7E7] text-xs font-medium text-[#111111] rounded transition-colors"
-          >
-            Close Drawer
-          </button>
+        <div className="p-4 border-t border-[#E7E7E7] bg-[#F5F5F5] flex items-center justify-between gap-2">
+          {confirmingDelete ? (
+            <div className="flex items-center gap-2 w-full">
+              <span className="text-xs text-red-600 font-medium">Delete permanently?</span>
+              <button
+                onClick={handleDelete}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded transition-colors cursor-pointer"
+              >
+                Yes, Delete
+              </button>
+              <button
+                onClick={() => setConfirmingDelete(false)}
+                className="px-3 py-1.5 bg-white border border-[#E7E7E7] text-xs font-medium text-[#111111] rounded hover:bg-[#F5F5F5] cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <>
+              <button
+                onClick={() => setConfirmingDelete(true)}
+                className="flex items-center gap-1.5 px-3 py-2 text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 rounded text-xs font-medium transition-colors cursor-pointer"
+                title="Permanently delete this lead"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete</span>
+              </button>
 
-          <button
-            onClick={handleCopyJson}
-            className="flex items-center gap-1.5 px-4 py-2 bg-[#111111] hover:bg-[#EA4B0B] text-white text-xs font-semibold rounded transition-colors"
-          >
-            <Copy className="w-3.5 h-3.5" />
-            <span>Copy Full Lead</span>
-          </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 bg-white hover:bg-[#E7E7E7] border border-[#E7E7E7] text-xs font-medium text-[#111111] rounded transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+
+                <button
+                  onClick={handleCopyJson}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-[#111111] hover:bg-[#EA4B0B] text-white text-xs font-semibold rounded transition-colors cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy Lead</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
       </div>

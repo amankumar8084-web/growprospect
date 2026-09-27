@@ -4,14 +4,13 @@
 *.env
 apps/api/src/.env
 apps/web/src/.env
+apps/api/src/data/
 
 # Dependencies
 node_modules/
 apps/web/node_modules/
 apps/api/node_modules/
 
-# Lock files
-package-lock.json
 
 # Markdown & Documentation files
 ARCHITECTURE.md

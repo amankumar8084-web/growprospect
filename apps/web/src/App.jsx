@@ -74,6 +74,28 @@ export default function App() {
     }
   };
 
+  const handleDeleteLead = async (leadId) => {
+    storage.deleteLead(leadId);
+    try {
+      await fetch(`http://localhost:3001/api/leads/${encodeURIComponent(leadId)}`, { method: 'DELETE' });
+    } catch {
+      // Backend sync is best-effort
+    }
+  };
+
+  const handleDeleteLeads = async (leadIds) => {
+    storage.deleteLeads(leadIds);
+    try {
+      await fetch('http://localhost:3001/api/leads/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: leadIds })
+      });
+    } catch {
+      // Backend sync is best-effort
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex font-sans">
       <SignedOut>
@@ -168,12 +190,14 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Asymmetric Metrics Bar */}
+              {/* Real Analytics Bar */}
               <MetricsBar
+                leads={leads}
                 leadsCount={leads.length}
                 activeScrapersCount={scrapers.length}
                 runningJobsCount={runningJobsCount}
                 runs={runs}
+                timeFilter={timeFilter}
               />
 
               {/* Active Run Diagnostic Panel (Progress & Live Event Stream) */}
@@ -202,6 +226,8 @@ export default function App() {
                   description="Most recent leads discovered across all engines."
                   leads={leads.slice(0, 10)}
                   onSelectLead={(lead) => setSelectedLead(lead)}
+                  onDeleteLead={handleDeleteLead}
+                  onDeleteLeads={handleDeleteLeads}
                 />
               </div>
             </div>
@@ -225,18 +251,16 @@ export default function App() {
           )}
 
           {currentTab.startsWith('leads') && (
-            <div className="space-y-8">
-              {scrapers
-                .filter(s => !currentTab.includes('_') || currentTab === `leads_${s.id}`)
-                .map((scraper) => (
-                <LeadsTable
-                  key={scraper.id}
-                  title={`${scraper.name} Leads`}
-                  description={`Discovered prospects from the ${scraper.name} engine.`}
-                  leads={leads.filter((l) => l.scraperId === scraper.id || (!l.scraperId && scraper.id === 'no-website-biz'))}
-                  onSelectLead={(lead) => setSelectedLead(lead)}
-                />
-              ))}
+            <div className="space-y-6">
+              <LeadsTable
+                title="Discovered Leads & Prospects"
+                description="Explore all pipeline leads. Filter by scraper engine, API provider/key, inspect signals, or select all / individual leads to permanently delete."
+                leads={leads}
+                initialScraper={currentTab.includes('_') ? currentTab.replace('leads_', '') : 'ALL'}
+                onSelectLead={(lead) => setSelectedLead(lead)}
+                onDeleteLead={handleDeleteLead}
+                onDeleteLeads={handleDeleteLeads}
+              />
             </div>
           )}
 
@@ -273,6 +297,7 @@ export default function App() {
       <LeadDetailDrawer
         lead={selectedLead}
         onClose={() => setSelectedLead(null)}
+        onDeleteLead={handleDeleteLead}
       />
       </SignedIn>
     </div>

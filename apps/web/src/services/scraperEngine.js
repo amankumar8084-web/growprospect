@@ -1,5 +1,5 @@
 import { storage } from './storage';
-import { GeoapifyClient } from '../../../../packages/scraper-business/src/geoapifyClient.js';
+import { providerService } from './providerService';
 import { ContactEnricher } from '../../../../packages/scraper-business/src/contactEnricher.js';
 
 class ScraperEngine {
@@ -18,9 +18,20 @@ class ScraperEngine {
     if (!scraper) throw new Error(`Scraper ${scraperId} not found`);
 
     if (scraper.id === 'no-website-biz') {
-      const settings = storage.getSettings();
-      if (!settings.geoapifyApiKey || settings.geoapifyApiKey.trim() === '') {
-        throw new Error('API Key Required: Please configure your Geoapify API Key in Settings to run this scraper.');
+      try {
+        const provConfig = await providerService.getConfig();
+        const active = provConfig.activeProvider || 'geoapify';
+        const activeProv = provConfig.providers?.[active];
+        if (activeProv && activeProv.enabled === false) {
+          throw new Error(`The active location provider (${activeProv.name}) is disabled. Please enable it in Settings.`);
+        }
+        if ((active === 'geoapify' || active === 'google_places') && !activeProv?.hasKey) {
+          throw new Error(`API Key Required: Please configure your ${activeProv?.name || 'Provider'} Key in Settings.`);
+        }
+      } catch (err) {
+        if (err.message && (err.message.includes('API Key Required') || err.message.includes('disabled'))) {
+          throw err;
+        }
       }
     }
 
@@ -218,60 +229,65 @@ class ScraperEngine {
 
     if (scraper.id === 'no-website-biz') {
       try {
-        const settings = storage.getSettings();
-        const apiKey = settings.geoapifyApiKey;
-        if (!apiKey) {
-          storage.appendRunLog(runId, { time: 'Just now', level: 'error', message: 'Geoapify API key not configured. Go to Settings and add your API key.' });
-          return [];
-        }
-        const client = new GeoapifyClient(apiKey);
         const enricher = new ContactEnricher();
-        
-        const rawPlaces = await client.searchPlaces({
+        storage.appendRunLog(runId, { time: 'Just now', level: 'info', message: 'Querying configured active location provider...' });
+
+        const rawPlaces = await providerService.searchPlaces({
           country,
+          state: filters.state || '',
           city,
           category: filters.category || 'Commercial & Local Services',
           limit: count
         });
 
+        if (!rawPlaces || rawPlaces.length === 0) {
+          storage.appendRunLog(runId, { time: 'Just now', level: 'warn', message: 'Active provider returned 0 places for this criteria.' });
+          return [];
+        }
+
+        const providerSource = rawPlaces[0]?.source || 'Location Provider';
+        storage.appendRunLog(runId, { time: 'Just now', level: 'info', message: `Discovered ${rawPlaces.length} places via ${providerSource}. Evaluating websites...` });
+
         for (const place of rawPlaces) {
           // 2. Verify that the business actually has NO website
           if (place.website) {
-            storage.appendRunLog(runId, { time: 'Just now', level: 'warn', message: `Filtered out ${place.name} - Website found on Geoapify` });
+            storage.appendRunLog(runId, { time: 'Just now', level: 'warn', message: `Filtered out ${place.name} - Website detected (${place.website})` });
             continue;
           }
 
           let finalPhone = place.phone || null;
           let finalEmail = null;
-          let sourceLog = 'Geoapify Places API';
+          let sourceLog = providerSource;
 
           // 3. Enrich missing contact information
           storage.appendRunLog(runId, { time: 'Just now', level: 'info', message: `Enriching contact info for ${place.name}...` });
-          const enrichment = await enricher.enrichBusinessContact({
-            name: place.name,
-            city,
-            country
-          });
-          
-          // Verify it still has no website on the secondary source!
-          if (enrichment.website) {
-            storage.appendRunLog(runId, { time: 'Just now', level: 'warn', message: `Filtered out ${place.name} - Website found via Secondary Source (${enrichment.source})` });
-            continue; 
-          }
+          try {
+            const enrichment = await enricher.enrichBusinessContact({
+              name: place.name,
+              city,
+              country
+            });
+            
+            // Verify it still has no website on the secondary source!
+            if (enrichment.website) {
+              storage.appendRunLog(runId, { time: 'Just now', level: 'warn', message: `Filtered out ${place.name} - Website found via Secondary Source (${enrichment.source})` });
+              continue; 
+            }
 
-          if (enrichment.phone && !finalPhone) {
-            finalPhone = enrichment.phone;
-            sourceLog += ` + ${enrichment.source}`;
-          }
-          if (enrichment.email) {
-            finalEmail = enrichment.email;
-            if (!sourceLog.includes(enrichment.source)) {
+            if (enrichment.phone && !finalPhone) {
+              finalPhone = enrichment.phone;
               sourceLog += ` + ${enrichment.source}`;
             }
+            if (enrichment.email) {
+              finalEmail = enrichment.email;
+              if (!sourceLog.includes(enrichment.source)) {
+                sourceLog += ` + ${enrichment.source}`;
+              }
+            }
+          } catch {
+            // Enrichment error is non-fatal
           }
 
-          // Strict validation: Keep NULL if not found
-          
           leads.push({
             id: place.id || `lead-${Date.now()}-${Math.random()}`,
             name: place.name || 'Unknown Business',
@@ -297,8 +313,13 @@ class ScraperEngine {
         }
         return leads;
       } catch (e) {
-        console.error("Geoapify live fetch failed", e);
-        return [];
+        console.error("Location provider search failed:", e);
+        storage.appendRunLog(runId, {
+          time: 'Just now',
+          level: 'error',
+          message: `[Provider Error] ${e.message || 'Location data provider query failed'}`
+        });
+        throw e;
       }
     }
 

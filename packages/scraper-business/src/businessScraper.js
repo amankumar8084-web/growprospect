@@ -1,9 +1,16 @@
-import { GeoapifyClient } from './geoapifyClient.js';
+import { ProviderFactory } from './providers/ProviderFactory.js';
+import { GeoapifyAdapter } from './providers/GeoapifyAdapter.js';
 import { DeduplicationEngine, normalizeLead, OPPORTUNITY_TYPES } from '@lead-discovery/scraper-core';
 
 export class BusinessScraper {
   constructor(options = {}) {
-    this.client = new GeoapifyClient(options.apiKey);
+    if (options.provider) {
+      this.provider = options.provider;
+    } else if (options.providerConfig) {
+      this.provider = ProviderFactory.getActiveProvider(options.providerConfig);
+    } else {
+      this.provider = new GeoapifyAdapter({ apiKey: options.apiKey });
+    }
     this.deduplicator = options.deduplicator || new DeduplicationEngine();
   }
 
@@ -11,6 +18,7 @@ export class BusinessScraper {
    * Discovers local businesses and separates No-Website leads from leads with websites.
    * @param {Object} filters
    * @param {string} filters.country Country code
+   * @param {string} [filters.state] State name or code
    * @param {string} filters.city City name
    * @param {string} filters.category Business category
    * @param {number} [filters.limit=20]
@@ -18,18 +26,20 @@ export class BusinessScraper {
    * @returns {Promise<{ noWebsiteLeads: Object[], websiteLeads: Object[], totalDiscovered: number, duplicates: number }>}
    */
   async runDiscovery(filters = {}) {
-    // 1. Discovery via Geoapify
-    const rawPlaces = await this.client.searchPlaces({
+    // 1. Discovery via configured active provider
+    const rawPlaces = await this.provider.searchPlaces({
       country: filters.country || 'US',
+      state: filters.state || '',
       city: filters.city || 'Austin, TX',
       category: filters.category || 'Commercial & Local Services',
       limit: filters.limit || 20
     });
 
     // 2. Normalization
+    const sourceEngine = this.provider.name || 'Location Provider API';
     const normalized = rawPlaces.map((place) =>
       normalizeLead(place, {
-        sourceEngine: 'Geoapify Places API',
+        sourceEngine,
         scraperId: 'no-website-biz',
         runId: filters.runId
       })

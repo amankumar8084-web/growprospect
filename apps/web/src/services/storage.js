@@ -1,4 +1,4 @@
-import { INITIAL_SCRAPERS, INITIAL_RUNS, INITIAL_LEADS } from '../data/seedData';
+import { INITIAL_SCRAPERS, INITIAL_RUNS, INITIAL_LEADS } from '../data/seedData.js';
 
 const STORAGE_KEYS = {
   SCRAPERS: 'scrape_core_scrapers',
@@ -194,6 +194,49 @@ class StorageService {
     }
 
     return { saved, duplicates };
+  }
+
+  recalculateScraperLeadCounts(remainingLeads) {
+    try {
+      const counts = {};
+      remainingLeads.forEach((l) => {
+        const sId = l.scraperId || 'no-website-biz';
+        counts[sId] = (counts[sId] || 0) + 1;
+      });
+      const scrapers = this.getScrapers().map((s) => ({
+        ...s,
+        leadsCount: counts[s.id] || 0
+      }));
+      localStorage.setItem(STORAGE_KEYS.SCRAPERS, JSON.stringify(scrapers));
+    } catch {
+      // Non-fatal if scrapers count recalculation fails
+    }
+  }
+
+  deleteLead(id) {
+    const currentLeads = this.getLeads();
+    const updated = currentLeads.filter((l) => l.id !== id);
+    localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(updated));
+    this.recalculateScraperLeadCounts(updated);
+    this.notify();
+    return updated;
+  }
+
+  deleteLeads(ids) {
+    const idsSet = new Set(ids);
+    const currentLeads = this.getLeads();
+    const updated = currentLeads.filter((l) => !idsSet.has(l.id));
+    localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(updated));
+    this.recalculateScraperLeadCounts(updated);
+    this.notify();
+    return updated;
+  }
+
+  clearAllLeads() {
+    localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify([]));
+    this.recalculateScraperLeadCounts([]);
+    this.notify();
+    return [];
   }
 
   getSettings() {

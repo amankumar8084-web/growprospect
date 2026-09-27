@@ -1,12 +1,46 @@
+import 'dotenv/config';
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import { BusinessScraper } from '../../packages/scraper-business/src/businessScraper.js';
 import { DeduplicationEngine, OPPORTUNITY_TYPES } from '../../packages/scraper-core/src/index.js';
 
 describe('Geoapify Business Discovery & Enrichment Pipeline', () => {
+  // Provider fixture conforming to Geoapify contract
+  const sampleGeoapifyProvider = {
+    name: 'Geoapify Places API',
+    async searchPlaces() {
+      return [
+        {
+          id: 'geo-1',
+          name: 'Austin Dental Clinic',
+          address: '123 Main St, Austin, TX',
+          city: 'Austin',
+          country: 'US',
+          website: null,
+          phone: '512-555-0100',
+          category: 'healthcare',
+          source: 'Geoapify Places API',
+          sourceUrl: 'https://api.geoapify.com/v2/places?id=geo-1'
+        },
+        {
+          id: 'geo-2',
+          name: 'Austin Tech Repair',
+          address: '456 Oak St, Austin, TX',
+          city: 'Austin',
+          country: 'US',
+          website: 'https://austintechrepair.com',
+          phone: '512-555-0200',
+          category: 'commercial.services',
+          source: 'Geoapify Places API',
+          sourceUrl: 'https://api.geoapify.com/v2/places?id=geo-2'
+        }
+      ];
+    }
+  };
+
   test('separates no-website leads from enrichable website leads', async () => {
     const deduplicator = new DeduplicationEngine();
-    const scraper = new BusinessScraper({ deduplicator });
+    const scraper = new BusinessScraper({ provider: sampleGeoapifyProvider, deduplicator });
 
     const result = await scraper.runDiscovery({
       country: 'US',
@@ -35,7 +69,7 @@ describe('Geoapify Business Discovery & Enrichment Pipeline', () => {
 
   test('deterministic deduplication prevents duplicate entities', async () => {
     const deduplicator = new DeduplicationEngine();
-    const scraper = new BusinessScraper({ deduplicator });
+    const scraper = new BusinessScraper({ provider: sampleGeoapifyProvider, deduplicator });
 
     // First discovery run
     const run1 = await scraper.runDiscovery({ city: 'Austin, TX', limit: 5 });
