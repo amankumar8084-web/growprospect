@@ -15,6 +15,7 @@
     "@lead-discovery/scraper-freelancer": "*",
     "@lead-discovery/scraper-hiring": "*",
     "@lead-discovery/scraper-website": "*",
+    "dotenv": "^18.0.4",
     "pg": "^8.23.0"
   }
 }
