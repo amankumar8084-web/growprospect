@@ -104,7 +104,8 @@ const SCRAPERS_MANIFEST = [
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-org-id, x-org-role');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-org-id, x-org-role, Access-Control-Request-Private-Network');
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
 }
 
 function sendJson(res, statusCode, data) {
@@ -168,7 +169,8 @@ function parseJsonBody(req) {
 
 const helmetMiddleware = helmet({
   contentSecurityPolicy: false,
-  crossOriginEmbedderPolicy: false
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
 });
 
 const server = http.createServer(async (req, res) => {
@@ -178,6 +180,7 @@ const server = http.createServer(async (req, res) => {
   await new Promise((resolve) => helmetMiddleware(req, res, () => resolve()));
 
   if (req.method === 'OPTIONS') {
+    setCorsHeaders(res);
     res.writeHead(204);
     res.end();
     return;
