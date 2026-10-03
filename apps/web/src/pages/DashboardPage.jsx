@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '@clerk/react';
+import { sessionManager } from '../services/sessionManager';
 import { Link } from 'react-router-dom';
 
 export default function DashboardPage() {
-  const { getToken } = useAuth();
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -12,10 +11,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
-        const token = await getToken();
-        const res = await fetch(`${API_URL}/api/dashboard`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const res = await sessionManager.authFetch(`${API_URL}/api/dashboard`);
         const data = await res.json();
         if (data.success) {
           setMetrics(data.data);

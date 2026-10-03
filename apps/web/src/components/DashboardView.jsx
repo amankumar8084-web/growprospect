@@ -3,7 +3,7 @@ import { crmService } from '../services/crmService';
 import { storage } from '../services/storage';
 import { sessionManager } from '../services/sessionManager';
 import { soundService } from '../services/soundService';
-import { useUser, UserButton } from '@clerk/clerk-react';
+import { useUser } from '../context/AuthContext';
 import { 
   Users, 
   UserPlus, 

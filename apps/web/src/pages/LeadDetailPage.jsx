@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '@clerk/react';
+import { sessionManager } from '../services/sessionManager';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 
 export default function LeadDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { getToken } = useAuth();
   
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -19,11 +18,8 @@ export default function LeadDetailPage() {
   useEffect(() => {
     const fetchLeadAndAudit = async () => {
       try {
-        const token = await getToken();
         // Fetch Lead
-        const resLead = await fetch(`${API_URL}/api/leads/${id}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const resLead = await sessionManager.authFetch(`${API_URL}/api/leads/${id}`);
         const dataLead = await resLead.json();
         
         if (dataLead.success) {
@@ -55,11 +51,9 @@ export default function LeadDetailPage() {
 
   const handleUpdate = async () => {
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/api/leads/${id}`, {
+      const res = await sessionManager.authFetch(`${API_URL}/api/leads/${id}`, {
         method: 'PATCH',
         headers: { 
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(formData)
@@ -84,10 +78,8 @@ export default function LeadDetailPage() {
     }
     setAnalyzing(true);
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/api/analysis/${id}/analyze`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await sessionManager.authFetch(`${API_URL}/api/analysis/${id}/analyze`, {
+        method: 'POST'
       });
       const data = await res.json();
       if (data.success) {

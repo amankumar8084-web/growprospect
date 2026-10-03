@@ -1,11 +1,26 @@
-import { test, describe } from 'node:test';
+import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert';
+
+// Mock localStorage for Node environment if needed
+if (typeof global.localStorage === 'undefined') {
+  let store = {};
+  global.localStorage = {
+    getItem: (key) => store[key] || null,
+    setItem: (key, val) => { store[key] = String(val); },
+    removeItem: (key) => { delete store[key]; },
+    clear: () => { store = {}; }
+  };
+}
+
 import { sessionManager } from '../src/services/sessionManager.js';
 
-describe('Clerk Session Management & Bearer Authentication', () => {
-  test('registers dynamic token getter and retrieves active token', async () => {
-    const mockToken = 'mock_clerk_jwt_token_header.payload.sig';
-    sessionManager.setTokenGetter(async () => mockToken);
+describe('JWT Session Management & Bearer Authentication', () => {
+  beforeEach(() => {
+    global.localStorage.clear();
+  });
+  test('stores access token and retrieves active token', async () => {
+    const mockToken = 'mock_jwt_access_token_header.payload.sig';
+    global.localStorage.setItem('gp_access_token', mockToken);
 
     const token = await sessionManager.getToken();
     assert.strictEqual(token, mockToken);
@@ -13,23 +28,27 @@ describe('Clerk Session Management & Bearer Authentication', () => {
 
   test('stores and exposes session metadata correctly', () => {
     const mockInfo = {
-      sessionId: 'sess_test_123456',
-      status: 'active',
-      lastActiveAt: new Date().toISOString(),
+      role: 'admin',
+      orgId: 'org_test_123',
       user: {
         id: 'usr_test_987',
-        fullName: 'Lead Discovery Admin'
+        name: 'Lead Discovery Admin',
+        email: 'admin@test.local'
       }
     };
 
     sessionManager.setSessionInfo(mockInfo);
     const retrieved = sessionManager.getSessionInfo();
-    assert.deepStrictEqual(retrieved, mockInfo);
+    assert.deepStrictEqual(retrieved.user, mockInfo.user);
+    assert.strictEqual(sessionManager.getRole(), 'admin');
+    assert.strictEqual(sessionManager.getOrgId(), 'org_test_123');
   });
 
-  test('authFetch injects Authorization: Bearer token header', async () => {
+  test('authFetch injects Authorization: Bearer token header and org headers', async () => {
     const mockToken = 'mock_valid_bearer_token';
-    sessionManager.setTokenGetter(async () => mockToken);
+    global.localStorage.setItem('gp_access_token', mockToken);
+    sessionManager.setOrgId('org_company_1');
+    sessionManager.setRole('manager');
 
     // Mock global fetch
     let capturedHeaders = null;
@@ -47,36 +66,37 @@ describe('Clerk Session Management & Bearer Authentication', () => {
       await sessionManager.authFetch('http://localhost:3001/api/crm/pipeline');
       assert.ok(capturedHeaders, 'Headers must be captured');
       assert.strictEqual(capturedHeaders.get('Authorization'), `Bearer ${mockToken}`);
+      assert.strictEqual(capturedHeaders.get('x-org-id'), 'org_company_1');
+      assert.strictEqual(capturedHeaders.get('x-org-role'), 'manager');
     } finally {
       global.fetch = originalFetch;
     }
   });
 
   test('backend session verification decodes JWT payload properly', () => {
-    // Simulating the backend decode algorithm
     const mockPayload = {
-      sid: 'sess_clerk_active_789',
-      sub: 'usr_clerk_lead_finder',
-      iss: 'https://clerk.accounts.dev',
+      userId: 'usr_jwt_lead_finder',
+      sub: 'usr_jwt_lead_finder',
+      org_id: 'org_alpha',
+      role: 'admin',
       exp: Math.floor(Date.now() / 1000) + 3600 // 1 hour ahead
     };
 
     const encodedPayload = Buffer.from(JSON.stringify(mockPayload)).toString('base64url');
-    const jwt = `eyJhbGciOiJSUzI1NiJ9.${encodedPayload}.signature_mock`;
+    const jwt = `eyJhbGciOiJIUzI1NiJ9.${encodedPayload}.signature_mock`;
 
     const parts = jwt.split('.');
     assert.strictEqual(parts.length, 3);
     const parsed = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
 
-    assert.strictEqual(parsed.sid, 'sess_clerk_active_789');
-    assert.strictEqual(parsed.sub, 'usr_clerk_lead_finder');
+    assert.strictEqual(parsed.userId, 'usr_jwt_lead_finder');
+    assert.strictEqual(parsed.org_id, 'org_alpha');
     assert.ok(parsed.exp * 1000 > Date.now(), 'Token must not be expired');
   });
 
   test('rejects expired session tokens', () => {
     const expiredPayload = {
-      sid: 'sess_expired_123',
-      sub: 'usr_expired',
+      userId: 'usr_expired',
       exp: Math.floor(Date.now() / 1000) - 300 // expired 5 minutes ago
     };
 

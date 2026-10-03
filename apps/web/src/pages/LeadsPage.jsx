@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { sessionManager } from '../services/sessionManager';
 import { Link } from 'react-router-dom';
 
 export default function LeadsPage() {
-  const { getToken } = useAuth();
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -16,10 +15,7 @@ export default function LeadsPage() {
   const fetchLeads = async () => {
     setLoading(true);
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/api/leads?page=${page}&limit=10&search=${search}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await sessionManager.authFetch(`${API_URL}/api/leads?page=${page}&limit=10&search=${search}`);
       const data = await res.json();
       if (data.success) {
         setLeads(data.data);
@@ -39,10 +35,8 @@ export default function LeadsPage() {
   const handleDelete = async (id) => {
     if (!confirm('Are you sure you want to delete this lead?')) return;
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/api/leads/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await sessionManager.authFetch(`${API_URL}/api/leads/${id}`, {
+        method: 'DELETE'
       });
       const data = await res.json();
       if (data.success) {
@@ -56,10 +50,7 @@ export default function LeadsPage() {
   const handleExport = async (format) => {
     setExporting(true);
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/api/leads/export?format=${format}&search=${search}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await sessionManager.authFetch(`${API_URL}/api/leads/export?format=${format}&search=${search}`);
       
       if (!res.ok) {
         alert('Export failed');

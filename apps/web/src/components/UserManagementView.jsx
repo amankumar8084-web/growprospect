@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { crmService } from '../services/crmService';
 import { sessionManager } from '../services/sessionManager';
-import { useUser } from '@clerk/clerk-react';
+import { useUser, useAuth } from '../context/AuthContext';
 import { 
   Users, 
   UserPlus, 

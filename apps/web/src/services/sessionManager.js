@@ -1,27 +1,60 @@
 /**
- * Centralized Session Manager for GrowProspect
- * Manages Clerk session Access Tokens, Token Refresh mechanisms,
- * Authenticated API requests with auto-refresh on 401, and Session Diagnostics.
+ * Centralized JWT Session Manager for GrowProspect
+ * Manages JWT Access Tokens, Refresh Tokens, bcrypt Authentication,
+ * Authenticated API requests with auto-refresh on 401, and Role Isolation.
  */
 
 import { normalizeRole } from '../constants/crm.js';
 
-let tokenGetter = null;
-let refreshTokenGetter = null;
+const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 
+  (typeof process !== 'undefined' && process.env?.VITE_API_URL) || 
+  'http://localhost:3001';
+
+const TOKEN_KEY = 'gp_access_token';
+const REFRESH_TOKEN_KEY = 'gp_refresh_token';
+const USER_KEY = 'gp_user_info';
+
 let currentSessionInfo = null;
 let activeOrgId = 'org_default';
-let activeRole = 'rep';
+let activeRole = 'admin';
 let isRefreshing = false;
 let refreshPromise = null;
 const listeners = new Set();
 
 export const sessionManager = {
   /**
+   * Initialize session from localStorage on startup
+   */
+  async initSession() {
+    try {
+      const storedUser = localStorage.getItem(USER_KEY);
+      const token = localStorage.getItem(TOKEN_KEY);
+
+      if (storedUser && token) {
+        const userObj = JSON.parse(storedUser);
+        currentSessionInfo = {
+          user: userObj,
+          role: userObj.role || 'admin',
+          orgId: userObj.orgId || userObj.org_id || 'org_default'
+        };
+        activeOrgId = currentSessionInfo.orgId;
+        activeRole = currentSessionInfo.role;
+        this.notify();
+      }
+    } catch {
+      // Storage access fail safe
+    }
+  },
+
+  /**
    * Set active organization ID for multi-tenant isolation
-   * @param {string} orgId 
    */
   setOrgId(orgId) {
     activeOrgId = orgId || 'org_default';
+    if (currentSessionInfo) {
+      currentSessionInfo.orgId = activeOrgId;
+      if (currentSessionInfo.user) currentSessionInfo.user.orgId = activeOrgId;
+    }
     this.notify();
   },
 
@@ -29,15 +62,18 @@ export const sessionManager = {
    * Get active organization ID
    */
   getOrgId() {
-    return activeOrgId;
+    return activeOrgId || currentSessionInfo?.orgId || 'org_default';
   },
 
   /**
    * Set active organization role ('admin' | 'manager' | 'rep')
-   * @param {string} role 
    */
   setRole(role) {
     activeRole = normalizeRole(role);
+    if (currentSessionInfo) {
+      currentSessionInfo.role = activeRole;
+      if (currentSessionInfo.user) currentSessionInfo.user.role = activeRole;
+    }
     this.notify();
   },
 
@@ -45,23 +81,11 @@ export const sessionManager = {
    * Get active organization role
    */
   getRole() {
-    return activeRole;
+    return activeRole || currentSessionInfo?.role || 'rep';
   },
 
   /**
-   * Register Clerk's Access Token & Refresh Token suppliers
-   * @param {Function} getterAsync Async function returning access token string
-   * @param {Function} [refreshGetterAsync] Async function forcing fresh token (skipCache)
-   */
-  setTokenGetter(getterAsync, refreshGetterAsync = null) {
-    tokenGetter = getterAsync;
-    refreshTokenGetter = refreshGetterAsync || getterAsync;
-    this.notify();
-  },
-
-  /**
-   * Update cached session metadata for display and inspection
-   * @param {Object} sessionInfo
+   * Set session information
    */
   setSessionInfo(sessionInfo) {
     currentSessionInfo = sessionInfo;
@@ -69,7 +93,12 @@ export const sessionManager = {
       activeOrgId = sessionInfo.orgId;
     }
     if (sessionInfo?.role) {
-      activeRole = sessionInfo.role;
+      activeRole = normalizeRole(sessionInfo.role);
+    }
+    if (sessionInfo?.user) {
+      try {
+        localStorage.setItem(USER_KEY, JSON.stringify(sessionInfo.user));
+      } catch {}
     }
     this.notify();
   },
@@ -82,52 +111,164 @@ export const sessionManager = {
   },
 
   /**
+   * Check if user is authenticated
+   */
+  isAuthenticated() {
+    return Boolean(localStorage.getItem(TOKEN_KEY) && currentSessionInfo?.user);
+  },
+
+  /**
    * Fetch the current active Access Token
-   * @returns {Promise<string|null>}
    */
   async getToken() {
-    if (typeof tokenGetter === 'function') {
-      try {
-        const token = await tokenGetter();
-        if (token) return token;
-      } catch (err) {
-        console.warn('[sessionManager] Failed to get Clerk access token:', err);
-      }
-    }
-
-    // Fallback to local storage if available
     try {
-      const fallback = localStorage.getItem('ms_auth_token');
-      if (fallback) return fallback;
+      return localStorage.getItem(TOKEN_KEY);
     } catch {
-      // Storage access might fail in private mode
+      return null;
+    }
+  },
+
+  /**
+   * Fetch the Refresh Token
+   */
+  getRefreshToken() {
+    try {
+      return localStorage.getItem(REFRESH_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Login with email & password via JWT API
+   */
+  async login(identifier, password) {
+    const res = await fetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: identifier, email: identifier, password })
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to login');
     }
 
-    return null;
+    if (data.accessToken) {
+      localStorage.setItem(TOKEN_KEY, data.accessToken);
+    }
+    if (data.refreshToken) {
+      localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
+    }
+    if (data.user) {
+      this.setSessionInfo({
+        user: data.user,
+        role: data.user.role || 'admin',
+        orgId: data.user.orgId || 'org_default'
+      });
+    }
+
+    this.notify({ event: 'login', user: data.user });
+    return data;
+  },
+
+  /**
+   * Register a new user with bcrypt & JWT
+   */
+  async register({ name, email, password, role = 'admin', orgName = 'My Organization' }) {
+    const res = await fetch(`${API_BASE}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password, role, orgName })
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to register account');
+    }
+
+    if (data.accessToken) {
+      localStorage.setItem(TOKEN_KEY, data.accessToken);
+    }
+    if (data.refreshToken) {
+      localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
+    }
+    if (data.user) {
+      this.setSessionInfo({
+        user: data.user,
+        role: data.user.role || 'admin',
+        orgId: data.user.orgId || 'org_default'
+      });
+    }
+
+    this.notify({ event: 'register', user: data.user });
+    return data;
+  },
+
+  /**
+   * Log out user and clear tokens
+   */
+  async logout() {
+    const refreshToken = this.getRefreshToken();
+    try {
+      if (refreshToken) {
+        await fetch(`${API_BASE}/api/auth/logout`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken })
+        });
+      }
+    } catch {
+      // Best effort
+    }
+
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+    currentSessionInfo = null;
+    this.notify({ event: 'logout' });
   },
 
   /**
    * Force refresh the Access Token using the Refresh Token flow
-   * Deduplicates concurrent refresh calls
-   * @returns {Promise<string|null>}
    */
   async refreshToken() {
     if (isRefreshing && refreshPromise) {
       return refreshPromise;
     }
 
+    const refreshToken = this.getRefreshToken();
+    if (!refreshToken) {
+      return null;
+    }
+
     isRefreshing = true;
     refreshPromise = (async () => {
       try {
-        if (typeof refreshTokenGetter === 'function') {
-          const newToken = await refreshTokenGetter();
-          if (newToken) {
-            try {
-              localStorage.setItem('ms_auth_token', newToken);
-            } catch {}
-            this.notify({ event: 'token_refreshed', token: newToken });
-            return newToken;
+        const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken })
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.accessToken) {
+          localStorage.setItem(TOKEN_KEY, data.accessToken);
+          if (data.refreshToken) {
+            localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
           }
+          if (data.user) {
+            this.setSessionInfo({
+              user: data.user,
+              role: data.user.role,
+              orgId: data.user.orgId
+            });
+          }
+          this.notify({ event: 'token_refreshed', token: data.accessToken });
+          return data.accessToken;
+        } else {
+          // Token expired or invalid -> sign out
+          this.logout();
         }
       } catch (err) {
         console.warn('[sessionManager] Token refresh failed:', err);
@@ -145,9 +286,6 @@ export const sessionManager = {
    * Perform an authenticated fetch request attaching Authorization: Bearer <token>.
    * If a 401 Unauthorized occurs, it automatically performs a Refresh Token cycle
    * and retries the request once before failing.
-   * @param {string} url 
-   * @param {RequestInit} [options={}] 
-   * @returns {Promise<Response>}
    */
   async authFetch(url, options = {}) {
     let token = await this.getToken();
@@ -174,7 +312,7 @@ export const sessionManager = {
 
     // Auto-refresh token on 401 Unauthorized and retry once
     if (res.status === 401) {
-      console.warn('[sessionManager] 401 detected for request. Attempting Refresh Token cycle for:', url);
+      console.warn('[sessionManager] 401 detected. Attempting JWT Refresh Token cycle for:', url);
       const freshToken = await this.refreshToken();
 
       if (freshToken) {
@@ -203,9 +341,8 @@ export const sessionManager = {
 
   /**
    * Verify session with the backend API /api/auth/session
-   * @param {string} [apiUrl]
    */
-  async verifySessionWithBackend(apiUrl = 'http://localhost:3001') {
+  async verifySessionWithBackend(apiUrl = API_BASE) {
     const startTime = performance.now();
     try {
       const token = await this.getToken();
@@ -251,3 +388,6 @@ export const sessionManager = {
     });
   }
 };
+
+// Initialize stored session immediately
+sessionManager.initSession();

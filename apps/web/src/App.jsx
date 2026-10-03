@@ -11,17 +11,17 @@ import DashboardView from './components/DashboardView';
 import UserManagementView from './components/UserManagementView';
 import PipelineView from './components/PipelineView';
 import NotificationPopover from './components/NotificationPopover';
+import LoginPage from './components/LoginPage';
+import UserButton from './components/UserButton';
 import { storage } from './services/storage';
 import { scraperEngine } from './services/scraperEngine';
 import { sessionManager } from './services/sessionManager';
 import { crmService } from './services/crmService';
-import { SignedIn, SignedOut, SignIn, UserButton, useSession, useUser, useAuth } from '@clerk/clerk-react';
+import { useAuth } from './context/AuthContext';
 import { Menu, Play, Bell, Search } from 'lucide-react';
 
 export default function App() {
-  const { session } = useSession();
-  const { user } = useUser();
-  const { signOut, orgId, orgRole, isLoaded } = useAuth();
+  const { user, role, orgId, isAuthenticated, isLoaded, logout } = useAuth();
 
   const [currentTab, setCurrentTab] = useState('dashboard');
   const [scrapers, setScrapers] = useState([]);
@@ -35,51 +35,12 @@ export default function App() {
   const [modalScraper, setModalScraper] = useState(null);
   const [timeFilter, setTimeFilter] = useState('7d');
 
-  // Wait for Clerk to fully initialize before syncing session
   useEffect(() => {
     if (!isLoaded) return;
     setScrapers(storage.getScrapers());
     setRuns(storage.getRuns());
     setLeads(storage.getLeads());
   }, [isLoaded]);
-
-  // Synchronize active Clerk session & Organization with central sessionManager
-  useEffect(() => {
-    if (!isLoaded) return;
-    if (orgId) {
-      sessionManager.setOrgId(orgId);
-    }
-    if (orgRole) {
-      sessionManager.setRole(orgRole);
-    } else {
-      sessionManager.setRole('admin');
-    }
-    if (session) {
-      // Configure Access Token and Refresh Token (skipCache) suppliers
-      sessionManager.setTokenGetter(
-        async () => {
-          return await session.getToken();
-        },
-        async () => {
-          return await session.getToken({ skipCache: true });
-        }
-      );
-      sessionManager.setSessionInfo({
-        sessionId: session.id,
-        status: session.status,
-        lastActiveAt: session.lastActiveAt,
-        expireAt: session.expireAt,
-        orgId: orgId || 'org_default',
-        role: orgRole || 'admin',
-        user: {
-          id: user?.id,
-          fullName: user?.fullName || user?.username || 'Admin User',
-          primaryEmail: user?.primaryEmailAddress?.emailAddress || 'admin@growprospect.local',
-          imageUrl: user?.imageUrl
-        }
-      });
-    }
-  }, [session, user, orgId, orgRole]);
 
   // Refresh tasks due today for sidebar badge
   const refreshTasksDueToday = async () => {
@@ -92,8 +53,10 @@ export default function App() {
   };
 
   useEffect(() => {
-    refreshTasksDueToday();
-  }, [user, session]);
+    if (isAuthenticated) {
+      refreshTasksDueToday();
+    }
+  }, [user, isAuthenticated]);
 
   useEffect(() => {
     const unsubStorage = storage.subscribe(() => {
@@ -165,7 +128,7 @@ export default function App() {
     }
   };
 
-  // Show spinner while Clerk loads to prevent null useContext crash
+  // Show spinner while session loads
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
@@ -177,30 +140,13 @@ export default function App() {
     );
   }
 
+  // If not logged in, render native JWT Login/Register page
+  if (!isAuthenticated || !user) {
+    return <LoginPage />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex font-sans">
-      <SignedOut>
-        <div className="flex flex-col w-full items-center justify-center min-h-screen bg-gray-50 p-4">
-          <div className="mb-6 flex flex-col items-center">
-            <img src="/logo.png" alt="GrowProspect" className="h-20 w-auto object-contain" />
-          </div>
-          <SignIn
-            routing="hash"
-            appearance={{
-              elements: {
-                socialButtonsRoot: { display: 'none' },
-                socialButtonsBlockButton: { display: 'none' },
-                dividerRow: { display: 'none' },
-                footerAction: { display: 'none' },
-                footer: { display: 'none' },
-                developmentBadge: { display: 'none' },
-              },
-            }}
-          />
-        </div>
-      </SignedOut>
-
-      <SignedIn>
       {/* Sidebar */}
       <Sidebar
         currentTab={currentTab}
@@ -255,15 +201,7 @@ export default function App() {
 
             {/* Top Right Profile Avatar */}
             <div className="flex items-center pl-1">
-              <UserButton 
-                afterSignOutUrl="/" 
-                appearance={{
-                  elements: {
-                    userButtonAvatarBox: 'w-8 h-8 rounded-full ring-2 ring-gray-100 hover:ring-[#ea580c]/30 transition-all',
-                    userButtonPopoverCard: 'shadow-2xl border border-gray-100 rounded-2xl'
-                  }
-                }}
-              />
+              <UserButton />
             </div>
           </div>
         </header>
@@ -282,8 +220,8 @@ export default function App() {
           {currentTab === 'pipeline' && (
             <PipelineView
               onSelectLead={(lead) => setSelectedLead(lead)}
-              currentRole={sessionManager.getRole()}
-              currentUserId={user?.id}
+              currentRole={role}
+              currentUserId={user?.id || user?.user_id}
             />
           )}
 
@@ -314,8 +252,6 @@ export default function App() {
 
         </main>
 
-
-
       </div>
 
       <ScraperModal
@@ -335,7 +271,6 @@ export default function App() {
           refreshTasksDueToday();
         }}
       />
-      </SignedIn>
     </div>
   );
 }

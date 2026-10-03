@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '@clerk/react';
+import { sessionManager } from '../services/sessionManager';
 
 export default function LocationSelector() {
-  const { getToken } = useAuth();
   const [countries, setCountries] = useState([]);
   const [states, setStates] = useState([]);
   const [cities, setCities] = useState([]);
@@ -14,10 +13,7 @@ export default function LocationSelector() {
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
   const fetchWithToken = async (endpoint) => {
-    const token = await getToken();
-    const res = await fetch(`${API_URL}${endpoint}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    const res = await sessionManager.authFetch(`${API_URL}${endpoint}`);
     return res.json();
   };
 

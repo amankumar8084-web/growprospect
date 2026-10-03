@@ -10,13 +10,15 @@
     "test": "echo \"No tests configured yet\" && exit 0"
   },
   "dependencies": {
-    "@clerk/backend": "^3.22.0",
     "@lead-discovery/scraper-business": "*",
     "@lead-discovery/scraper-core": "*",
     "@lead-discovery/scraper-freelancer": "*",
     "@lead-discovery/scraper-hiring": "*",
     "@lead-discovery/scraper-website": "*",
+    "bcryptjs": "^2.4.3",
     "dotenv": "^18.0.4",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
     "pg": "^8.23.0"
   }
 }

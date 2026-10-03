@@ -38,6 +38,15 @@ import {
   migrateOpportunityTypesToTags,
   getCRMDashboard
 } from './controllers/crmController.js';
+import helmet from 'helmet';
+import { 
+  loginUser, 
+  registerUser, 
+  refreshUserToken, 
+  logoutUser, 
+  findUserById, 
+  usersStore 
+} from './services/authService.js';
 import { normalizeRole, PIPELINE_STAGES } from './constants/crm.js';
 import { authenticateRequest, requireRole, canAccessLead } from './middlewares/authMiddleware.js';
 import { filterStoreByTenantAndRole, validateOrgId } from './db/tenantQuery.js';
@@ -157,8 +166,16 @@ function parseJsonBody(req) {
   });
 }
 
+const helmetMiddleware = helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+});
+
 const server = http.createServer(async (req, res) => {
   setCorsHeaders(res);
+
+  // Apply helmet security headers
+  await new Promise((resolve) => helmetMiddleware(req, res, () => resolve()));
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -170,7 +187,7 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname;
 
   try {
-    // 1. Health check: the ONLY public unauthenticated endpoint
+    // 1. Health check: Public unauthenticated endpoint
     if (pathname === '/api/health' && req.method === 'GET') {
       sendJson(res, 200, {
         status: 'healthy',
@@ -182,7 +199,48 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 2. Protect ALL other /api routes with @clerk/backend token verification
+    // 2. Public JWT Authentication Endpoints (bcryptjs + JWT tokens)
+    if (pathname === '/api/auth/login' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      try {
+        const result = await loginUser(body);
+        sendJson(res, 200, { success: true, ...result });
+      } catch (err) {
+        sendJson(res, err.statusCode || 401, { success: false, error: err.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/auth/register' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      try {
+        const result = await registerUser(body);
+        sendJson(res, 201, { success: true, ...result });
+      } catch (err) {
+        sendJson(res, err.statusCode || 400, { success: false, error: err.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/auth/refresh' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      try {
+        const result = await refreshUserToken(body.refreshToken);
+        sendJson(res, 200, { success: true, ...result });
+      } catch (err) {
+        sendJson(res, err.statusCode || 401, { success: false, error: err.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/auth/logout' && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      logoutUser(body.refreshToken);
+      sendJson(res, 200, { success: true, message: 'Logged out successfully' });
+      return;
+    }
+
+    // 3. Protect ALL other /api routes with JWT Bearer token verification
     if (pathname.startsWith('/api')) {
       try {
         await authenticateRequest(req);
@@ -195,13 +253,14 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // 2a. Session Verification & Diagnostic endpoint
-    if (pathname === '/api/auth/session' && req.method === 'GET') {
+    // 3a. Session Verification & Profile endpoint
+    if ((pathname === '/api/auth/session' || pathname === '/api/auth/me') && req.method === 'GET') {
       sendJson(res, 200, {
         success: true,
         authenticated: true,
+        user: req.auth,
         session: req.auth,
-        type: 'clerk_jwt',
+        type: 'jwt',
         serverTimestamp: new Date().toISOString()
       });
       return;

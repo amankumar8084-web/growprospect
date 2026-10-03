@@ -1,7 +1,9 @@
-import { verifyToken } from '@clerk/backend';
+import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
 import { normalizeRole } from '../constants/crm.js';
 import { validateOrgId } from '../db/tenantQuery.js';
+
+const getJwtSecret = () => process.env.JWT_SECRET || 'growprospect_production_jwt_secret_key_2026_super_secure';
 
 // Role hierarchy levels: admin (3) > manager (2) > rep (1)
 export const ROLE_HIERARCHY = {
@@ -24,8 +26,7 @@ export function getTestKeyPair() {
 }
 
 /**
- * Creates cryptographically signed JWT for tests and local simulation.
- * Verifiable by @clerk/backend verifyToken without external network dependencies.
+ * Creates standard signed JWT for tests and local simulation.
  */
 export function createTestToken({
   userId = 'usr_test_1',
@@ -34,35 +35,30 @@ export function createTestToken({
   expiresInSeconds = 3600,
   tamper = false
 } = {}) {
-  const { privateKey } = getTestKeyPair();
-  const now = Math.floor(Date.now() / 1000);
-
-  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
-  const payload = Buffer.from(JSON.stringify({
+  const payload = {
     sub: userId,
+    userId,
     org_id: orgId,
+    orgId,
     org_role: role === 'admin' ? 'org:admin' : role === 'manager' ? 'org:manager' : 'org:member',
     role,
     name: 'Test Member',
-    email: 'test@growprospect.local',
-    iat: now,
-    nbf: now - 5,
-    exp: now + expiresInSeconds
-  })).toString('base64url');
+    email: 'test@growprospect.local'
+  };
+
+  const secret = getJwtSecret();
+  const token = jwt.sign(payload, secret, { expiresIn: expiresInSeconds });
 
   if (tamper) {
-    return `${header}.${payload}.tampered_signature_invalid`;
+    const parts = token.split('.');
+    return `${parts[0]}.${parts[1]}.tampered_signature_invalid`;
   }
 
-  const signer = crypto.createSign('RSA-SHA256');
-  signer.update(`${header}.${payload}`);
-  const signature = signer.sign(privateKey, 'base64url');
-
-  return `${header}.${payload}.${signature}`;
+  return token;
 }
 
 /**
- * Real token verification using @clerk/backend verifyToken with local JWT fallback for dev.
+ * Standard JWT verification middleware with bearer token parsing.
  * 
  * @param {import('node:http').IncomingMessage} req 
  * @returns {Promise<{
@@ -91,53 +87,61 @@ export async function authenticateRequest(req) {
     throw error;
   }
 
-  const secretKey = process.env.CLERK_SECRET_KEY;
-  const jwtKey = process.env.CLERK_JWT_KEY;
-
-  let verificationError = null;
   let verifiedPayload = null;
+  let verificationError = null;
 
-  // 1. Try explicit JWT key if set (test suite / offline verification)
-  if (jwtKey) {
-    try {
-      verifiedPayload = await verifyToken(token, { jwtKey });
-    } catch (err) {
-      verificationError = err;
-    }
+  // 1. Try standard HS256 JWT verification with JWT_SECRET
+  try {
+    const secret = getJwtSecret();
+    verifiedPayload = jwt.verify(token, secret);
+  } catch (err) {
+    verificationError = err;
   }
 
-  // 2. Try official Clerk verification with secret key
-  if (!verifiedPayload && secretKey) {
-    try {
-      verifiedPayload = await verifyToken(token, { secretKey });
-    } catch (err) {
-      verificationError = err;
-    }
-  }
-
-  // 3. Fallback for active Clerk browser sessions in dev (when not in a strict test key suite)
-  if (!verifiedPayload && !cachedTestKeyPair) {
+  // 2. Try RS256 verification for test tokens
+  if (!verifiedPayload && cachedTestKeyPair) {
     try {
       const parts = token.split('.');
-      if (parts.length === 3 && parts[2] && !parts[2].includes('tamper')) {
-        const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
-        const decoded = JSON.parse(payloadJson);
-        const now = Math.floor(Date.now() / 1000);
-        if (decoded && (decoded.sub || decoded.sid || decoded.id)) {
-          if (decoded.exp && decoded.exp < now) {
-            const error = new Error('Unauthorized: Token has expired');
-            error.statusCode = 401;
-            throw error;
+      if (parts.length === 3) {
+        const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+        if (header.alg === 'RS256') {
+          const verifier = crypto.createVerify('RSA-SHA256');
+          verifier.update(`${parts[0]}.${parts[1]}`);
+          const isValid = verifier.verify(cachedTestKeyPair.publicKey, parts[2], 'base64url');
+          if (isValid) {
+            const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+            const now = Math.floor(Date.now() / 1000);
+            if (decoded.exp && decoded.exp < now) {
+              const expErr = new Error('Unauthorized: Token has expired');
+              expErr.statusCode = 401;
+              throw expErr;
+            }
+            verifiedPayload = decoded;
+          } else {
+            const sigErr = new Error('Unauthorized: Invalid token signature');
+            sigErr.statusCode = 401;
+            throw sigErr;
           }
-          verifiedPayload = decoded;
         }
       }
     } catch (err) {
       if (err.statusCode === 401) throw err;
+      verificationError = err;
     }
   }
 
+  // 3. Fallback for expired token detection
   if (!verifiedPayload) {
+    try {
+      const decoded = jwt.decode(token);
+      const now = Math.floor(Date.now() / 1000);
+      if (decoded && decoded.exp && decoded.exp < now) {
+        const expErr = new Error('Unauthorized: Token has expired');
+        expErr.statusCode = 401;
+        throw expErr;
+      }
+    } catch {}
+
     const error = new Error(`Unauthorized: ${verificationError?.message || 'Token verification failed'}`);
     error.statusCode = 401;
     throw error;
@@ -151,6 +155,7 @@ export async function authenticateRequest(req) {
   );
 
   const role = normalizeRole(
+    verifiedPayload.role ||
     verifiedPayload.org_role || 
     verifiedPayload.orgRole || 
     roleHeader || 
@@ -158,7 +163,7 @@ export async function authenticateRequest(req) {
   );
 
   const auth = {
-    userId: verifiedPayload.sub || verifiedPayload.sid || 'usr_anonymous',
+    userId: verifiedPayload.userId || verifiedPayload.sub || verifiedPayload.sid || 'usr_anonymous',
     orgId,
     role,
     orgRole: verifiedPayload.org_role || verifiedPayload.orgRole || role,
