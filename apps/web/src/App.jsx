@@ -192,6 +192,8 @@ export default function App() {
                 socialButtonsBlockButton: { display: 'none' },
                 dividerRow: { display: 'none' },
                 footerAction: { display: 'none' },
+                footer: { display: 'none' },
+                developmentBadge: { display: 'none' },
               },
             }}
           />

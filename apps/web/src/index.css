@@ -222,3 +222,16 @@ caption {
   height: 14px !important;
   color: #8A8A8A !important;
 }
+
+/* Hide Clerk development mode badge / watermarks on login page */
+.cl-dev-badge,
+.cl-developmentBadge,
+.cl-internal-b3fm6y,
+.cl-internal-1dauvpw,
+.cl-internal-development-badge,
+[data-localization-key*="development"],
+.cl-footerAction,
+.cl-footer {
+  display: none !important;
+}
+
