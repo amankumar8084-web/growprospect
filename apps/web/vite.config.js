@@ -8,4 +8,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  resolve: {
+    // Force all packages to share a single React instance.
+    // Prevents "Invalid hook call" from lucide-react, @dnd-kit, etc.
+    dedupe: ['react', 'react-dom', 'react/jsx-runtime'],
+  },
 })

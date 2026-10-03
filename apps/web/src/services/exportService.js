@@ -1,4 +1,4 @@
-// Export utilities for CSV, Excel (XLSX compatible XML/CSV), and JSON
+// Export utilities for CSV, Excel (XLSX compatible XML/CSV), and JSON respecting CRM fields
 
 export const exportLeadsToCsv = (leads, filename = `leads_export_${new Date().toISOString().slice(0, 10)}.csv`) => {
   if (!leads || leads.length === 0) {
@@ -9,17 +9,24 @@ export const exportLeadsToCsv = (leads, filename = `leads_export_${new Date().to
   const headers = [
     'Lead ID',
     'Company / Business Name',
+    'Status / Stage',
+    'Owner / Assignee',
+    'Deal Value ($)',
+    'Next Follow-up',
+    'City',
+    'State',
+    'Country',
+    'Location',
     'Opportunity Type',
     'Category',
-    'Location',
     'Website',
     'Phone',
     'Email',
     'Verification Status',
+    'Tags',
     'Source',
-    'Source URL',
-    'Scraped At',
-    'Scraper Run ID'
+    'Notes',
+    'Created At'
   ];
 
   const escapeField = (val) => {
@@ -30,18 +37,25 @@ export const exportLeadsToCsv = (leads, filename = `leads_export_${new Date().to
 
   const rows = leads.map((l) => [
     escapeField(l.id),
-    escapeField(l.name),
-    escapeField(l.opportunityType),
-    escapeField(l.category),
-    escapeField(l.location),
-    escapeField(l.website || 'N/A'),
-    escapeField(l.phone || 'N/A'),
-    escapeField(l.email || 'N/A'),
+    escapeField(l.company_name || l.name || 'Unknown Company'),
+    escapeField(l.pipeline_stage || l.status || 'New'),
+    escapeField(l.assigned_to_name || l.owner_id || 'Unassigned'),
+    escapeField(l.deal_value || 0),
+    escapeField(l.next_followup || ''),
+    escapeField(l.city || ''),
+    escapeField(l.state || ''),
+    escapeField(l.country || ''),
+    escapeField(l.location || ''),
+    escapeField(l.opportunityType || ''),
+    escapeField(l.category || ''),
+    escapeField(l.website || ''),
+    escapeField(l.phone || ''),
+    escapeField(l.email || ''),
     escapeField(l.emailVerificationStatus || 'unverified'),
-    escapeField(l.source),
-    escapeField(l.sourceUrl || ''),
-    escapeField(l.scrapedAt),
-    escapeField(l.scraperRunId || '')
+    escapeField(Array.isArray(l.tags) ? l.tags.join('; ') : ''),
+    escapeField(l.source || l.scraperName || 'Manual'),
+    escapeField(l.notes || ''),
+    escapeField(l.created_at || l.scrapedAt || '')
   ]);
 
   const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
@@ -61,25 +75,26 @@ export const exportLeadsToExcel = (leads, filename = `leads_export_${new Date().
     <head>
       <meta charset="utf-8" />
       <style>
-        th { background-color: #111111; color: #FFFFFF; font-weight: bold; border: 1px solid #CCCCCC; padding: 8px; }
-        td { border: 1px solid #E0E0E0; padding: 6px; font-family: sans-serif; }
+        th { background-color: #111111; color: #FFFFFF; font-weight: bold; border: 1px solid #CCCCCC; padding: 8px; font-family: sans-serif; }
+        td { border: 1px solid #E0E0E0; padding: 6px; font-family: sans-serif; font-size: 13px; }
       </style>
     </head>
     <body>
       <table>
         <thead>
           <tr>
-            <th>Company / Business Name</th>
-            <th>Opportunity Type</th>
-            <th>Category</th>
-            <th>Location</th>
+            <th>Company Name</th>
+            <th>Stage</th>
+            <th>Owner</th>
+            <th>Deal Value</th>
+            <th>Next Follow-up</th>
+            <th>City</th>
+            <th>Country</th>
             <th>Website</th>
             <th>Phone</th>
             <th>Email</th>
-            <th>Verification Status</th>
+            <th>Tags</th>
             <th>Source</th>
-            <th>Scraped Date</th>
-            <th>Run ID</th>
           </tr>
         </thead>
         <tbody>
@@ -88,17 +103,18 @@ export const exportLeadsToExcel = (leads, filename = `leads_export_${new Date().
   leads.forEach((l) => {
     html += `
       <tr>
-        <td>${escapeHtml(l.name)}</td>
-        <td>${escapeHtml(l.opportunityType)}</td>
-        <td>${escapeHtml(l.category)}</td>
-        <td>${escapeHtml(l.location)}</td>
+        <td>${escapeHtml(l.company_name || l.name)}</td>
+        <td>${escapeHtml(l.pipeline_stage || l.status || 'New')}</td>
+        <td>${escapeHtml(l.assigned_to_name || l.owner_id || 'Unassigned')}</td>
+        <td>${escapeHtml(l.deal_value ? `$${l.deal_value}` : '$0')}</td>
+        <td>${escapeHtml(l.next_followup || '-')}</td>
+        <td>${escapeHtml(l.city || '-')}</td>
+        <td>${escapeHtml(l.country || '-')}</td>
         <td>${escapeHtml(l.website || '-')}</td>
         <td>${escapeHtml(l.phone || '-')}</td>
         <td>${escapeHtml(l.email || '-')}</td>
-        <td>${escapeHtml(l.emailVerificationStatus || '-')}</td>
-        <td>${escapeHtml(l.source)}</td>
-        <td>${escapeHtml(l.scrapedAt ? new Date(l.scrapedAt).toLocaleDateString() : '-')}</td>
-        <td>${escapeHtml(l.scraperRunId || '-')}</td>
+        <td>${escapeHtml(Array.isArray(l.tags) ? l.tags.join(', ') : '-')}</td>
+        <td>${escapeHtml(l.source || l.scraperName || 'Manual')}</td>
       </tr>
     `;
   });

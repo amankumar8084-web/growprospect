@@ -1,868 +1,877 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Search, 
-  Filter, 
-  Download, 
-  FileSpreadsheet, 
-  FileText, 
-  ExternalLink, 
-  CheckCircle, 
-  Clock, 
-  AlertCircle, 
-  Copy, 
-  Check, 
-  ChevronLeft, 
-  ChevronRight,
-  Eye,
-  Globe,
-  Phone,
-  Mail,
-  Trash2,
-  Cpu,
-  Key,
-  Layers,
-  X,
-  AlertTriangle
+  Plus, 
+  Upload,
+  ChevronDown, 
+  ChevronsUpDown, 
+  Globe, 
+  Mail, 
+  Phone, 
+  MapPin, 
+  Eye, 
+  Trash2, 
+  X, 
+  AlertTriangle,
+  Building2,
+  DollarSign,
+  Tag,
+  Clock,
+  User,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
-import { exportLeadsToCsv, exportLeadsToExcel, exportLeadsToJson } from '../services/exportService';
+import { PIPELINE_STAGES } from '../constants/crm';
+import { crmService } from '../services/crmService';
+import { storage } from '../services/storage';
+import { sessionManager } from '../services/sessionManager';
+import { soundService } from '../services/soundService';
+import CsvImportModal from './CsvImportModal';
 
-const STANDARD_SCRAPERS = [
-  { id: 'no-website-biz', name: 'No-Website Business Finder' },
-  { id: 'outdated-website-biz', name: 'Outdated-Website Business Finder' },
-  { id: 'tech-hiring', name: 'Tech Hiring Finder' },
-  { id: 'freelance-req', name: 'Freelancer Requirement Finder' }
-];
-
-const STANDARD_PROVIDERS = [
-  'Google Maps / Places API',
-  'Geoapify Places API',
-  'OpenStreetMap (Nominatim)',
-  'Crawlee + Playwright',
-  'Job Boards API',
-  'Contract RSS'
-];
+// Modern status badge styling matching Dashboard theme
+const STATUS_STYLES = {
+  new: {
+    label: 'New',
+    bg: 'bg-slate-100',
+    text: 'text-slate-700',
+    border: 'border-slate-200',
+  },
+  contacted: {
+    label: 'Contacted',
+    bg: 'bg-blue-50',
+    text: 'text-blue-700',
+    border: 'border-blue-200',
+  },
+  'follow-up': {
+    label: 'Follow-up',
+    bg: 'bg-amber-50',
+    text: 'text-amber-700',
+    border: 'border-amber-200',
+  },
+  followup: {
+    label: 'Follow-up',
+    bg: 'bg-amber-50',
+    text: 'text-amber-700',
+    border: 'border-amber-200',
+  },
+  replied: {
+    label: 'Follow-up',
+    bg: 'bg-amber-50',
+    text: 'text-amber-700',
+    border: 'border-amber-200',
+  },
+  interested: {
+    label: 'Interested',
+    bg: 'bg-rose-50',
+    text: 'text-rose-700',
+    border: 'border-rose-200',
+  },
+  meeting: {
+    label: 'Interested',
+    bg: 'bg-rose-50',
+    text: 'text-rose-700',
+    border: 'border-rose-200',
+  },
+  proposal: {
+    label: 'Interested',
+    bg: 'bg-rose-50',
+    text: 'text-rose-700',
+    border: 'border-rose-200',
+  },
+  closed: {
+    label: 'Closed',
+    bg: 'bg-emerald-50',
+    text: 'text-emerald-700',
+    border: 'border-emerald-200',
+  },
+  won: {
+    label: 'Closed',
+    bg: 'bg-emerald-50',
+    text: 'text-emerald-700',
+    border: 'border-emerald-200',
+  },
+  lost: {
+    label: 'Lost',
+    bg: 'bg-rose-50',
+    text: 'text-rose-700',
+    border: 'border-rose-200',
+  }
+};
 
 export default function LeadsTable({ 
   leads = [], 
   onSelectLead, 
   onDeleteLead,
   onDeleteLeads,
-  title = "Discovered Leads & Opportunities", 
-  description = "Normalized prospects ready for filtering, verification inspection, and CSV/Excel export.",
-  initialScraper = 'ALL',
-  initialSource = 'ALL'
+  onLeadsUpdated,
+  title = "Clients", 
+  description = null,
+  initialScraper = 'ALL'
 }) {
+  const currentUser = sessionManager.getSessionInfo()?.user;
+  const currentUserId = currentUser?.id || 'usr_anonymous';
+  const userRole = sessionManager.getRole();
+  const isManagerOrAdmin = userRole === 'admin' || userRole === 'manager';
+
+  // Filters state
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedScraper, setSelectedScraper] = useState(initialScraper);
-  const [selectedProvider, setSelectedProvider] = useState(initialSource);
-  const [selectedType, setSelectedType] = useState('ALL');
-  const [selectedVerification, setSelectedVerification] = useState('ALL');
-  const [selectedLocation, setSelectedLocation] = useState('ALL');
-  const [selectedWebsiteStatus, setSelectedWebsiteStatus] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [itemsPerPage, setItemsPerPage] = useState(25);
   const [currentPage, setCurrentPage] = useState(1);
-  const [copiedId, setCopiedId] = useState(null);
-  const [selectedIds, setSelectedIds] = useState(new Set());
-  
-  // Deletion confirmation modal states
-  const [leadToDelete, setLeadToDelete] = useState(null);
-  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [sortField, setSortField] = useState('updated'); // 'client' | 'status' | 'updated'
+  const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
 
-  const itemsPerPage = 8;
+  // Modals & Notifications
+  const [isAddClientOpen, setIsAddClientOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importNotification, setImportNotification] = useState(null);
+  const [lostModalLeadId, setLostModalLeadId] = useState(null);
+  const [lostReasonInput, setLostReasonInput] = useState('');
+  const [claimingId, setClaimingId] = useState(null);
 
-  // Sync if initial props change (e.g. navigation tab clicked)
-  useEffect(() => {
-    if (initialScraper) {
-      setSelectedScraper(initialScraper);
-      setCurrentPage(1);
+  // Add Client Form State
+  const [newClientForm, setNewClientForm] = useState({
+    name: '',
+    company_name: '',
+    email: '',
+    phone: '',
+    location: '',
+    category: '',
+    deal_value: '',
+    status: 'new',
+    notes: ''
+  });
+  const [isSubmittingClient, setIsSubmittingClient] = useState(false);
+
+  // Handle Add Client Submit
+  const handleAddClient = async (e) => {
+    e.preventDefault();
+    if (!newClientForm.company_name.trim() && !newClientForm.name.trim()) {
+      alert('Please enter at least a company name or contact name');
+      return;
     }
-  }, [initialScraper]);
 
-  useEffect(() => {
-    if (initialSource) {
-      setSelectedProvider(initialSource);
-      setCurrentPage(1);
-    }
-  }, [initialSource]);
+    setIsSubmittingClient(true);
+    try {
+      const newLead = {
+        id: `lead_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        name: newClientForm.name.trim() || 'Direct Client',
+        company_name: newClientForm.company_name.trim() || newClientForm.name.trim(),
+        email: newClientForm.email.trim(),
+        phone: newClientForm.phone.trim(),
+        location: newClientForm.location.trim(),
+        city: newClientForm.location.trim(),
+        tags: newClientForm.category.trim() ? [newClientForm.category.trim()] : [],
+        opportunityType: newClientForm.category.trim(),
+        deal_value: Number(newClientForm.deal_value) || 0,
+        status: newClientForm.status,
+        pipeline_stage: newClientForm.status === 'closed' ? 'Won' : newClientForm.status.charAt(0).toUpperCase() + newClientForm.status.slice(1),
+        notes: newClientForm.notes.trim(),
+        source: 'Manual Client Entry',
+        created_at: new Date().toISOString(),
+        last_activity_at: new Date().toISOString(),
+        org_id: sessionManager.getOrgId() || 'org_default'
+      };
 
-  // Clean up selected IDs that no longer exist in leads
-  useEffect(() => {
-    const currentLeadIdSet = new Set(leads.map(l => l.id));
-    setSelectedIds(prev => {
-      let changed = false;
-      const next = new Set();
-      prev.forEach(id => {
-        if (currentLeadIdSet.has(id)) {
-          next.add(id);
-        } else {
-          changed = true;
-        }
+      storage.addLead(newLead);
+      soundService.playSuccessSound();
+      setIsAddClientOpen(false);
+      setNewClientForm({
+        name: '',
+        company_name: '',
+        email: '',
+        phone: '',
+        location: '',
+        category: '',
+        deal_value: '',
+        status: 'new',
+        notes: ''
       });
-      return changed ? next : prev;
-    });
-  }, [leads]);
+    } catch (err) {
+      alert('Failed to add client: ' + err.message);
+    } finally {
+      setIsSubmittingClient(false);
+    }
+  };
 
-  // Available scrapers derived from standard list + actual leads data
-  const availableScrapers = useMemo(() => {
-    const map = new Map(STANDARD_SCRAPERS.map(s => [s.id, s.name]));
-    leads.forEach(l => {
-      if (l.scraperId) {
-        map.set(l.scraperId, l.scraperName || l.scraperId);
-      }
-    });
-    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [leads]);
-
-  // Available providers/sources derived from standard list + actual leads data
-  const availableProviders = useMemo(() => {
-    const set = new Set(STANDARD_PROVIDERS);
-    leads.forEach(l => {
-      if (l.source) set.add(l.source);
-    });
-    return Array.from(set);
-  }, [leads]);
-
-  // Opportunity types derived from leads
-  const opportunityTypes = useMemo(() => {
-    const types = new Set(leads.map((l) => l.opportunityType).filter(Boolean));
-    return Array.from(types);
-  }, [leads]);
-
-  // Locations derived from leads
-  const availableLocations = useMemo(() => {
-    return Array.from(new Set(leads.map(l => l.location))).filter(Boolean);
-  }, [leads]);
-
-  const websiteStatuses = [
-    'Unknown', 'No Website', 'Website Exists', 'Website Unreachable', 'Outdated Website', 'Modern Website'
-  ];
-
-  // Filtered leads
-  const filteredLeads = useMemo(() => {
+  // Filter & Search Logic
+  const filteredClients = useMemo(() => {
     return leads.filter((lead) => {
-      const q = searchQuery.toLowerCase().trim();
-      const matchesSearch = !q ||
-        (lead.name && lead.name.toLowerCase().includes(q)) ||
-        (lead.location && lead.location.toLowerCase().includes(q)) ||
-        (lead.category && lead.category.toLowerCase().includes(q)) ||
-        (lead.email && lead.email.toLowerCase().includes(q)) ||
-        (lead.phone && lead.phone.includes(q)) ||
-        (lead.source && lead.source.toLowerCase().includes(q)) ||
-        (lead.scraperName && lead.scraperName.toLowerCase().includes(q));
+      // 1. Status Filter
+      if (statusFilter !== 'ALL') {
+        const leadStatus = (lead.status || lead.pipeline_stage || 'new').toLowerCase();
+        if (statusFilter === 'follow-up') {
+          if (leadStatus !== 'follow-up' && leadStatus !== 'followup' && leadStatus !== 'replied') return false;
+        } else if (statusFilter === 'interested') {
+          if (leadStatus !== 'interested' && leadStatus !== 'meeting' && leadStatus !== 'proposal') return false;
+        } else if (statusFilter === 'closed') {
+          if (leadStatus !== 'closed' && leadStatus !== 'won') return false;
+        } else if (leadStatus !== statusFilter.toLowerCase()) {
+          return false;
+        }
+      }
 
-      // Exact Scraper filter
-      const leadScraper = lead.scraperId || 'no-website-biz';
-      const matchesScraper = selectedScraper === 'ALL' || leadScraper === selectedScraper;
+      // 2. Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesName = (lead.name || lead.company_name || '').toLowerCase().includes(q);
+        const matchesEmail = (lead.email || '').toLowerCase().includes(q);
+        const matchesPhone = (lead.phone || '').includes(q);
+        const matchesLoc = (lead.location || lead.city || '').toLowerCase().includes(q);
+        const matchesCategory = Array.isArray(lead.tags) && lead.tags.some((t) => t.toLowerCase().includes(q));
+        if (!matchesName && !matchesEmail && !matchesPhone && !matchesLoc && !matchesCategory) return false;
+      }
 
-      // Exact API Provider / Key Source filter
-      const leadSource = lead.source || '';
-      const matchesProvider = selectedProvider === 'ALL' || 
-        leadSource === selectedProvider || 
-        leadSource.toLowerCase().includes(selectedProvider.toLowerCase());
-
-      const matchesType = selectedType === 'ALL' || lead.opportunityType === selectedType;
-      const matchesVerification = 
-        selectedVerification === 'ALL' || 
-        lead.emailVerificationStatus === selectedVerification;
-      const matchesLocation = selectedLocation === 'ALL' || lead.location === selectedLocation;
-      const matchesWebsiteStatus = selectedWebsiteStatus === 'ALL' || (lead.website_status === selectedWebsiteStatus || (!lead.website_status && selectedWebsiteStatus === 'Unknown'));
-
-      return matchesSearch && matchesScraper && matchesProvider && matchesType && matchesVerification && matchesLocation && matchesWebsiteStatus;
+      return true;
     });
-  }, [leads, searchQuery, selectedScraper, selectedProvider, selectedType, selectedVerification, selectedLocation, selectedWebsiteStatus]);
+  }, [leads, statusFilter, searchQuery]);
 
-  // Pagination calculation
-  const totalPages = Math.ceil(filteredLeads.length / itemsPerPage) || 1;
-  const paginatedLeads = useMemo(() => {
+  // Sorting
+  const sortedClients = useMemo(() => {
+    return [...filteredClients].sort((a, b) => {
+      if (sortField === 'client') {
+        const nameA = (a.company_name || a.name || '').toLowerCase();
+        const nameB = (b.company_name || b.name || '').toLowerCase();
+        return sortDirection === 'asc' ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
+      }
+      if (sortField === 'status') {
+        const statusA = (a.status || 'new').toLowerCase();
+        const statusB = (b.status || 'new').toLowerCase();
+        return sortDirection === 'asc' ? statusA.localeCompare(statusB) : statusB.localeCompare(statusA);
+      }
+      // default: updated date
+      const dateA = new Date(a.last_activity_at || a.created_at || a.scrapedAt || 0).getTime();
+      const dateB = new Date(b.last_activity_at || b.created_at || b.scrapedAt || 0).getTime();
+      return sortDirection === 'asc' ? dateA - dateB : dateB - dateA;
+    });
+  }, [filteredClients, sortField, sortDirection]);
+
+  // Pagination
+  const totalPages = Math.ceil(sortedClients.length / itemsPerPage) || 1;
+  const paginatedClients = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
-    return filteredLeads.slice(start, start + itemsPerPage);
-  }, [filteredLeads, currentPage]);
+    return sortedClients.slice(start, start + itemsPerPage);
+  }, [sortedClients, currentPage, itemsPerPage]);
 
-  // Selection handlers
-  const isAllPageSelected = paginatedLeads.length > 0 && paginatedLeads.every(l => selectedIds.has(l.id));
-  const isSomePageSelected = paginatedLeads.some(l => selectedIds.has(l.id)) && !isAllPageSelected;
-  const isAllFilteredSelected = filteredLeads.length > 0 && filteredLeads.every(l => selectedIds.has(l.id));
-
-  const toggleSelectRow = (id) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleSelectPage = () => {
-    if (isAllPageSelected) {
-      setSelectedIds(prev => {
-        const next = new Set(prev);
-        paginatedLeads.forEach(l => next.delete(l.id));
-        return next;
-      });
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
-      setSelectedIds(prev => {
-        const next = new Set(prev);
-        paginatedLeads.forEach(l => next.add(l.id));
-        return next;
-      });
+      setSortField(field);
+      setSortDirection('asc');
     }
   };
 
-  const selectAllFiltered = () => {
-    setSelectedIds(new Set(filteredLeads.map(l => l.id)));
+  // Inline status change handler
+  const handleInlineStatusChange = async (lead, newStatus) => {
+    if (newStatus === 'lost') {
+      setLostModalLeadId(lead.id);
+      return;
+    }
+    try {
+      await crmService.editLead(lead.id, { status: newStatus });
+    } catch (err) {
+      alert(`Error updating status: ${err.message}`);
+    }
   };
 
-  const deselectAll = () => {
-    setSelectedIds(new Set());
+  const handleConfirmLostStatus = async () => {
+    if (!lostReasonInput.trim()) {
+      alert('Please provide a lost reason');
+      return;
+    }
+    try {
+      await crmService.editLead(lostModalLeadId, { status: 'lost', lost_reason: lostReasonInput.trim() });
+      setLostModalLeadId(null);
+      setLostReasonInput('');
+    } catch (err) {
+      alert(`Error setting lost status: ${err.message}`);
+    }
   };
 
-  // Delete actions
-  const confirmDeleteSingle = () => {
-    if (!leadToDelete) return;
-    if (onDeleteLead) {
-      onDeleteLead(leadToDelete.id);
+  // Rep Claim Handler
+  const handleClaimLead = async (leadId) => {
+    setClaimingId(leadId);
+    try {
+      await crmService.claimLead(leadId);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setClaimingId(null);
     }
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      next.delete(leadToDelete.id);
-      return next;
-    });
-    setLeadToDelete(null);
   };
 
-  const confirmDeleteBulk = () => {
-    if (selectedIds.size === 0) return;
-    const idsList = Array.from(selectedIds);
-    if (onDeleteLeads) {
-      onDeleteLeads(idsList);
-    } else if (onDeleteLead) {
-      idsList.forEach(id => onDeleteLead(id));
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '—';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
+      return dateStr;
     }
-    setSelectedIds(new Set());
-    setIsBulkDeleting(false);
   };
-
-  const handleCopy = (text, id) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 1500);
-  };
-
-  // Badge helper functions
-  const getProviderBadge = (source) => {
-    if (!source) return { label: 'Unknown Provider', color: 'bg-[#F5F5F5] text-[#8A8A8A] border-[#E7E7E7]' };
-    const s = source.toLowerCase();
-    if (s.includes('google')) {
-      return { label: 'Google Places API', color: 'bg-blue-50 text-blue-700 border-blue-200' };
-    }
-    if (s.includes('geoapify')) {
-      return { label: 'Geoapify API', color: 'bg-[#FFF5F0] text-[#EA4B0B] border-[#FFE2D5]' };
-    }
-    if (s.includes('openstreetmap') || s.includes('nominatim') || s.includes('osm')) {
-      return { label: 'OpenStreetMap', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-    }
-    if (s.includes('crawlee') || s.includes('playwright')) {
-      return { label: 'Crawlee + Browser', color: 'bg-purple-50 text-purple-700 border-purple-200' };
-    }
-    if (s.includes('job') || s.includes('hiring')) {
-      return { label: 'Job Boards API', color: 'bg-cyan-50 text-cyan-700 border-cyan-200' };
-    }
-    if (s.includes('rss') || s.includes('contract') || s.includes('rfp')) {
-      return { label: 'Contract RSS', color: 'bg-amber-50 text-amber-700 border-amber-200' };
-    }
-    return { label: source, color: 'bg-gray-100 text-gray-800 border-gray-200' };
-  };
-
-  const getScraperBadge = (scraperId, scraperName) => {
-    const s = (scraperId || '').toLowerCase();
-    if (s.includes('no-website')) {
-      return { label: 'No-Website Finder', color: 'bg-[#111111] text-white border-[#111111]' };
-    }
-    if (s.includes('outdated')) {
-      return { label: 'Outdated Website', color: 'bg-[#FFF1EB] text-[#EA4B0B] border-orange-200' };
-    }
-    if (s.includes('hiring') || s.includes('tech')) {
-      return { label: 'Tech Hiring', color: 'bg-blue-900 text-white border-blue-900' };
-    }
-    if (s.includes('freelance') || s.includes('rfp')) {
-      return { label: 'Freelancer RFP', color: 'bg-zinc-700 text-white border-zinc-700' };
-    }
-    return { label: scraperName || 'Custom Scraper', color: 'bg-gray-800 text-white border-gray-800' };
-  };
-
-  const selectedLeadsList = useMemo(() => {
-    return leads.filter(l => selectedIds.has(l.id));
-  }, [leads, selectedIds]);
-
-  const hasActiveFilters = searchQuery || selectedScraper !== 'ALL' || selectedProvider !== 'ALL' || selectedType !== 'ALL' || selectedVerification !== 'ALL' || selectedLocation !== 'ALL' || selectedWebsiteStatus !== 'ALL';
 
   return (
-    <div className="bg-white border border-[#E7E7E7] rounded-2xl overflow-hidden mb-8 shadow-sm">
-      {/* Table Header Controls */}
-      <div className="p-6 border-b border-[#E7E7E7] bg-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-4 font-sans">
+      {/* Top Header: Title, Total Clients subtitle, Import CSV & + Add Client Button */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-xl font-extrabold text-[#111111] tracking-tight">
-              {title}
-            </h2>
-            <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-[#111111] text-white">
-              {filteredLeads.length}
-            </span>
-            {selectedIds.size > 0 && (
-              <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-[#EA4B0B] text-white animate-pulse">
-                {selectedIds.size} Selected
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-[#8A8A8A] mt-1">
-            {description}
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">
+            {title}
+          </h1>
+          <p className="text-xs text-gray-400 mt-0.5 font-normal">
+            {leads.length} total clients
           </p>
         </div>
 
-        {/* Export Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5 self-start sm:self-auto">
           <button
-            onClick={() => exportLeadsToCsv(selectedIds.size > 0 ? selectedLeadsList : filteredLeads)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-[#E7E7E7] border border-[#E7E7E7] rounded text-xs font-mono font-medium text-[#111111] transition-colors cursor-pointer"
-            title={selectedIds.size > 0 ? `Export ${selectedIds.size} selected leads to CSV` : "Export filtered records to standard CSV"}
+            onClick={() => setIsImportModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 text-xs sm:text-sm font-semibold rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
           >
-            <Download className="w-3.5 h-3.5 text-[#EA4B0B]" />
-            <span>{selectedIds.size > 0 ? `Export CSV (${selectedIds.size})` : 'Export CSV'}</span>
+            <Upload className="w-4 h-4 text-gray-500" />
+            <span>Import CSV</span>
           </button>
 
           <button
-            onClick={() => exportLeadsToExcel(selectedIds.size > 0 ? selectedLeadsList : filteredLeads)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#217346] hover:bg-[#1a5c38] border border-[#217346] rounded-lg text-xs font-medium text-white transition-colors cursor-pointer shadow-sm"
-            title={selectedIds.size > 0 ? `Export ${selectedIds.size} selected leads to Excel` : "Export to native Excel format"}
+            onClick={() => setIsAddClientOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-[#ea580c] hover:bg-[#c2410c] text-white text-xs sm:text-sm font-semibold rounded-lg shadow-sm active:scale-95 transition-all cursor-pointer"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-white" />
-            <span>{selectedIds.size > 0 ? `Export Excel (${selectedIds.size})` : 'Export Excel'}</span>
-          </button>
-
-          <button
-            onClick={() => exportLeadsToJson(selectedIds.size > 0 ? selectedLeadsList : filteredLeads)}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-[#E7E7E7] border border-[#E7E7E7] rounded text-xs font-mono font-medium text-[#111111] transition-colors cursor-pointer"
-            title="Export to JSON"
-          >
-            <FileText className="w-3.5 h-3.5 text-[#8A8A8A]" />
-            <span>JSON</span>
+            <Plus className="w-4 h-4 stroke-[2.5]" />
+            <span>Add Client</span>
           </button>
         </div>
       </div>
 
-      {/* ── Filter and Search Bar ── */}
-      <div className="px-6 py-4 border-b border-[#E7E7E7] flex flex-wrap items-center justify-between gap-3 bg-white">
-        <div className="flex flex-wrap items-center gap-3 flex-1">
-          {/* Search Input */}
-          <div className="relative min-w-[220px] flex-1 sm:flex-initial">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[#8A8A8A]" />
+      {/* Import Notification Banner */}
+      {importNotification && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold rounded-xl flex items-center justify-between animate-in fade-in duration-150">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{importNotification}</span>
+          </div>
+          <button 
+            onClick={() => setImportNotification(null)}
+            className="text-emerald-700 hover:text-emerald-900 p-0.5"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Main White Rounded Card */}
+      <div className="bg-white border border-gray-100 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden">
+        {/* Filter Bar */}
+        <div className="p-3.5 border-b border-gray-100 flex flex-wrap items-center gap-3">
+          {/* Search Box */}
+          <div className="relative min-w-[240px] sm:w-80">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
-              placeholder="Search company, location, email, source..."
+              placeholder="Search company, contact, email..."
               value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full pl-8 pr-3 py-2 text-sm bg-[#F5F5F5] border border-[#E7E7E7] rounded-xl focus:bg-white focus:border-[#111111] focus:outline-none placeholder:text-[#8A8A8A]"
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+              className="w-full pl-9 pr-8 py-1.5 bg-gray-50/70 border border-gray-200 rounded-lg text-xs font-normal focus:bg-white focus:border-gray-400 focus:outline-none placeholder:text-gray-400 text-gray-800 transition-colors"
             />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          {/* EXACT FILTER 1: Scraper Engine */}
-          <div className="flex items-center gap-1.5 bg-[#F5F5F5] px-2.5 py-1 rounded-lg border border-[#E7E7E7]">
-            <Cpu className="w-3.5 h-3.5 text-[#EA4B0B]" />
-            <span className="text-xs font-mono font-semibold text-[#111111]">Scraper:</span>
+          {/* Status Dropdown */}
+          <div className="relative">
             <select
-              value={selectedScraper}
-              onChange={(e) => {
-                setSelectedScraper(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="py-1 px-1.5 text-xs bg-transparent border-0 focus:outline-none font-medium text-[#111111] cursor-pointer"
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
+              className="py-1.5 pl-3 pr-8 bg-gray-50/70 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 focus:bg-white focus:outline-none appearance-none cursor-pointer"
             >
-              <option value="ALL">All Scrapers</option>
-              {availableScrapers.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
+              <option value="ALL">All statuses</option>
+              <option value="new">New</option>
+              <option value="contacted">Contacted</option>
+              <option value="follow-up">Follow-up</option>
+              <option value="interested">Interested</option>
+              <option value="closed">Closed</option>
+              <option value="lost">Lost</option>
             </select>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
-          {/* EXACT FILTER 2: API Provider / Key Source */}
-          <div className="flex items-center gap-1.5 bg-[#F5F5F5] px-2.5 py-1 rounded-lg border border-[#E7E7E7]">
-            <Key className="w-3.5 h-3.5 text-blue-600" />
-            <span className="text-xs font-mono font-semibold text-[#111111]">API / Provider:</span>
+          {/* Per Page Dropdown */}
+          <div className="relative">
             <select
-              value={selectedProvider}
-              onChange={(e) => {
-                setSelectedProvider(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="py-1 px-1.5 text-xs bg-transparent border-0 focus:outline-none font-medium text-[#111111] cursor-pointer"
+              value={itemsPerPage}
+              onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+              className="py-1.5 pl-3 pr-8 bg-gray-50/70 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 focus:bg-white focus:outline-none appearance-none cursor-pointer"
             >
-              <option value="ALL">All API Providers & Sources</option>
-              {availableProviders.map((prov) => (
-                <option key={prov} value={prov}>{prov}</option>
-              ))}
+              <option value={10}>10 per page</option>
+              <option value={25}>25 per page</option>
+              <option value={50}>50 per page</option>
+              <option value={100}>100 per page</option>
             </select>
-          </div>
-
-          {/* Opportunity Type Filter */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-mono text-[#8A8A8A]">Type:</span>
-            <select
-              value={selectedType}
-              onChange={(e) => {
-                setSelectedType(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1.5 text-xs bg-[#F5F5F5] border border-[#E7E7E7] rounded focus:bg-white focus:border-[#111111] focus:outline-none"
-            >
-              <option value="ALL">All Types</option>
-              {opportunityTypes.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Verification Status Filter */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-mono text-[#8A8A8A]">Status:</span>
-            <select
-              value={selectedVerification}
-              onChange={(e) => {
-                setSelectedVerification(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1.5 text-xs bg-[#F5F5F5] border border-[#E7E7E7] rounded focus:bg-white focus:border-[#111111] focus:outline-none"
-            >
-              <option value="ALL">All Verification</option>
-              <option value="verified">Verified Email</option>
-              <option value="unverified">Unverified</option>
-              <option value="pending">Pending Enrichment</option>
-              <option value="not_applicable">N/A (No Website)</option>
-            </select>
-          </div>
-
-          {/* Location Filter */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-mono text-[#8A8A8A]">Location:</span>
-            <select
-              value={selectedLocation}
-              onChange={(e) => {
-                setSelectedLocation(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1.5 text-xs bg-[#F5F5F5] border border-[#E7E7E7] rounded focus:bg-white focus:border-[#111111] focus:outline-none max-w-[140px]"
-            >
-              <option value="ALL">All Locations</option>
-              {availableLocations.map((loc) => (
-                <option key={loc} value={loc}>{loc}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Website Status Filter */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-mono text-[#8A8A8A]">Web Status:</span>
-            <select
-              value={selectedWebsiteStatus}
-              onChange={(e) => {
-                setSelectedWebsiteStatus(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1.5 text-xs bg-[#F5F5F5] border border-[#E7E7E7] rounded focus:bg-white focus:border-[#111111] focus:outline-none"
-            >
-              <option value="ALL">All Statuses</option>
-              {websiteStatuses.map((ws) => (
-                <option key={ws} value={ws}>{ws}</option>
-              ))}
-            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
 
-        {/* Clear Filters Reset */}
-        {hasActiveFilters && (
-          <button
-            onClick={() => {
-              setSearchQuery('');
-              setSelectedScraper('ALL');
-              setSelectedProvider('ALL');
-              setSelectedType('ALL');
-              setSelectedVerification('ALL');
-              setSelectedLocation('ALL');
-              setSelectedWebsiteStatus('ALL');
-              setCurrentPage(1);
-            }}
-            className="text-xs font-mono text-[#EA4B0B] hover:underline font-semibold"
-          >
-            Clear filters
-          </button>
+        {/* Table / Empty State */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-gray-50/70 border-b border-gray-100 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                <th 
+                  className="py-3 px-4 cursor-pointer select-none hover:text-gray-600 transition-colors"
+                  onClick={() => handleSort('client')}
+                >
+                  <div className="flex items-center gap-1">
+                    <span>CLIENT</span>
+                    <ChevronsUpDown className="w-3 h-3" />
+                  </div>
+                </th>
+                <th className="py-3 px-4">CONTACT</th>
+                <th className="py-3 px-4">LOCATION</th>
+                <th className="py-3 px-4">CATEGORY</th>
+                <th 
+                  className="py-3 px-4 cursor-pointer select-none hover:text-gray-600 transition-colors"
+                  onClick={() => handleSort('status')}
+                >
+                  <div className="flex items-center gap-1">
+                    <span>STATUS</span>
+                    <ChevronsUpDown className="w-3 h-3" />
+                  </div>
+                </th>
+                <th className="py-3 px-4">OWNER</th>
+                <th 
+                  className="py-3 px-4 cursor-pointer select-none hover:text-gray-600 transition-colors"
+                  onClick={() => handleSort('updated')}
+                >
+                  <div className="flex items-center gap-1">
+                    <span>UPDATED</span>
+                    <ChevronDown className="w-3 h-3" />
+                  </div>
+                </th>
+                <th className="py-3 px-4 text-right">ACTIONS</th>
+              </tr>
+            </thead>
+
+            {paginatedClients.length === 0 ? (
+              <tbody>
+                <tr>
+                  <td colSpan={8} className="py-24 text-center">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-gray-900">No clients found</p>
+                      <p className="text-xs text-gray-400">Get started by adding your first client.</p>
+                      <button
+                        onClick={() => setIsAddClientOpen(true)}
+                        className="mt-3 inline-flex items-center gap-1 px-3.5 py-1.5 bg-[#ea580c] hover:bg-[#c2410c] text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span>Add Client</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            ) : (
+              <tbody className="divide-y divide-gray-100">
+                {paginatedClients.map((client) => {
+                  const isUnassigned = !client.owner_id && !client.assigned_to;
+                  const isOwnedByMe = client.owner_id === currentUserId || client.assigned_to === currentUserId;
+                  const isReadOnlyForRep = userRole === 'rep' && !isOwnedByMe && !isUnassigned;
+
+                  const rawStatus = (client.status || client.pipeline_stage || 'new').toLowerCase();
+                  const statusConfig = STATUS_STYLES[rawStatus] || STATUS_STYLES.new;
+
+                  const categoryTag = Array.isArray(client.tags) && client.tags.length > 0
+                    ? client.tags[0]
+                    : client.opportunityType || 'General';
+
+                  return (
+                    <tr 
+                      key={client.id}
+                      className="hover:bg-gray-50/60 transition-colors group"
+                    >
+                      {/* CLIENT */}
+                      <td className="py-3.5 px-4 min-w-[180px]">
+                        <div 
+                          className="font-semibold text-sm text-gray-900 hover:text-[#ea580c] cursor-pointer truncate transition-colors"
+                          onClick={() => onSelectLead && onSelectLead(client)}
+                        >
+                          {client.company_name || client.name}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 text-[11px] text-gray-400">
+                          {client.website ? (
+                            <a
+                              href={client.website.startsWith('http') ? client.website : `https://${client.website}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hover:underline text-gray-400 hover:text-[#ea580c] flex items-center gap-1 truncate max-w-[140px]"
+                            >
+                              <Globe className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{client.website.replace(/^https?:\/\//, '')}</span>
+                            </a>
+                          ) : (
+                            <span className="italic text-[10px]">No website</span>
+                          )}
+
+                          {client.deal_value > 0 && (
+                            <span className="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 font-bold rounded text-[10px] border border-emerald-200">
+                              ${Number(client.deal_value).toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* CONTACT */}
+                      <td className="py-3.5 px-4 min-w-[140px]">
+                        <div className="text-gray-800 font-medium truncate">
+                          {client.name && client.name !== client.company_name ? client.name : client.job_title || '—'}
+                        </div>
+                        <div className="text-[11px] text-gray-400 flex flex-col mt-0.5 space-y-0.5">
+                          {client.email && (
+                            <a href={`mailto:${client.email}`} className="hover:text-[#ea580c] truncate flex items-center gap-1">
+                              <Mail className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{client.email}</span>
+                            </a>
+                          )}
+                          {client.phone && (
+                            <a href={`tel:${client.phone}`} className="hover:text-[#ea580c] flex items-center gap-1">
+                              <Phone className="w-3 h-3 shrink-0" />
+                              <span>{client.phone}</span>
+                            </a>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* LOCATION */}
+                      <td className="py-3.5 px-4 text-gray-600 text-xs font-normal">
+                        <div className="flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-gray-400 shrink-0" />
+                          <span>{client.city ? `${client.city}, ${client.country || 'US'}` : client.location || '—'}</span>
+                        </div>
+                      </td>
+
+                      {/* CATEGORY */}
+                      <td className="py-3.5 px-4">
+                        <span className="px-2 py-0.5 bg-gray-100 border border-gray-200 text-gray-600 rounded-md text-[11px] font-medium">
+                          {categoryTag}
+                        </span>
+                      </td>
+
+                      {/* STATUS */}
+                      <td className="py-3.5 px-4">
+                        <select
+                          value={rawStatus}
+                          onChange={(e) => handleInlineStatusChange(client, e.target.value)}
+                          disabled={isReadOnlyForRep}
+                          className={`py-1 px-2.5 rounded-full border text-xs font-medium focus:outline-none cursor-pointer transition-all disabled:opacity-50 ${statusConfig.bg} ${statusConfig.text} ${statusConfig.border}`}
+                        >
+                          <option value="new">New</option>
+                          <option value="contacted">Contacted</option>
+                          <option value="follow-up">Follow-up</option>
+                          <option value="interested">Interested</option>
+                          <option value="closed">Closed</option>
+                          <option value="lost">Lost</option>
+                        </select>
+                      </td>
+
+                      {/* OWNER */}
+                      <td className="py-3.5 px-4">
+                        {isUnassigned ? (
+                          userRole === 'rep' ? (
+                            <button
+                              onClick={() => handleClaimLead(client.id)}
+                              disabled={claimingId === client.id}
+                              className="px-2 py-1 bg-orange-50 hover:bg-orange-100 text-[#ea580c] border border-orange-200 rounded-lg text-xs font-semibold cursor-pointer"
+                            >
+                              {claimingId === client.id ? 'Claiming...' : '+ Claim'}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400 italic font-normal">Unassigned</span>
+                          )
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <span className="w-5 h-5 rounded-full bg-gray-900 text-white flex items-center justify-center font-bold text-[9px] shrink-0">
+                              {(client.assigned_to_name || client.owner_id || 'U').charAt(0).toUpperCase()}
+                            </span>
+                            <span className="text-gray-700 font-medium truncate max-w-[90px]">
+                              {isOwnedByMe ? 'You' : client.assigned_to_name || client.owner_id}
+                            </span>
+                          </div>
+                        )}
+                      </td>
+
+                      {/* UPDATED */}
+                      <td className="py-3.5 px-4 text-gray-400 text-xs">
+                        {formatDate(client.last_activity_at || client.created_at || client.scrapedAt)}
+                      </td>
+
+                      {/* ACTIONS */}
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => onSelectLead && onSelectLead(client)}
+                            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+                            title="View Details"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          {isManagerOrAdmin && (
+                            <button
+                              onClick={() => {
+                                if (confirm(`Delete client "${client.company_name || client.name}"?`)) {
+                                  if (onDeleteLead) onDeleteLead(client.id);
+                                }
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Delete Client"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            )}
+          </table>
+        </div>
+
+        {/* Pagination Footer */}
+        {sortedClients.length > 0 && (
+          <div className="p-3.5 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+            <span className="font-normal">
+              Showing <strong className="text-gray-800">{(currentPage - 1) * itemsPerPage + 1}</strong> to <strong className="text-gray-800">{Math.min(currentPage * itemsPerPage, sortedClients.length)}</strong> of <strong className="text-gray-800">{sortedClients.length}</strong> clients
+            </span>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-2.5 py-1 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:pointer-events-none text-xs font-medium text-gray-700 cursor-pointer"
+              >
+                Previous
+              </button>
+              <span className="px-2 font-semibold text-gray-800">
+                {currentPage} / {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="px-2.5 py-1 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:pointer-events-none text-xs font-medium text-gray-700 cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
-      {/* ── Bulk Actions Floating Toolbar (When Leads Are Selected) ── */}
-      {selectedIds.size > 0 && (
-        <div className="bg-[#111111] text-white px-6 py-3 flex flex-wrap items-center justify-between gap-4 animate-in fade-in duration-150">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#EA4B0B] animate-ping" />
-              <span className="text-xs font-mono font-bold tracking-wider uppercase text-[#E7E7E7]">
-                {selectedIds.size} of {filteredLeads.length} leads selected
-              </span>
+      {/* Add Client Modal */}
+      {isAddClientOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-gray-100 rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-5 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-orange-50 text-[#ea580c] flex items-center justify-center">
+                  <Building2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">Add New Client</h3>
+                  <p className="text-xs text-gray-400">Directly add a new client to your CRM pipeline</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAddClientOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-50 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            {selectedIds.size < filteredLeads.length && (
-              <button
-                onClick={selectAllFiltered}
-                className="text-xs font-semibold text-[#EA4B0B] hover:text-white underline transition-colors cursor-pointer"
-              >
-                Select all {filteredLeads.length} leads
-              </button>
-            )}
+            <form onSubmit={handleAddClient} className="space-y-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-1">Company / Client Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Acme Corp"
+                    value={newClientForm.company_name}
+                    onChange={(e) => setNewClientForm({ ...newClientForm, company_name: e.target.value })}
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none"
+                  />
+                </div>
 
-            <button
-              onClick={deselectAll}
-              className="text-xs text-[#8A8A8A] hover:text-white transition-colors cursor-pointer ml-2"
-            >
-              Deselect All
-            </button>
-          </div>
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-1">Contact Person Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Sarah Jenkins"
+                    value={newClientForm.name}
+                    onChange={(e) => setNewClientForm({ ...newClientForm, name: e.target.value })}
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none"
+                  />
+                </div>
 
-          <div className="flex items-center gap-3">
-            {/* Bulk Delete Button */}
-            <button
-              onClick={() => setIsBulkDeleting(true)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-sm hover:shadow"
-              title="Permanently delete all selected leads"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete Permanently ({selectedIds.size})</span>
-            </button>
-          </div>
-        </div>
-      )}
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="sarah@acmecorp.com"
+                    value={newClientForm.email}
+                    onChange={(e) => setNewClientForm({ ...newClientForm, email: e.target.value })}
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none"
+                  />
+                </div>
 
-      {/* ── Main Leads Table ── */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-[#E7E7E7] bg-[#F5F5F5] text-[11px] font-mono text-[#8A8A8A] uppercase tracking-wider">
-              {/* Select All Checkbox Column */}
-              <th className="py-3.5 pl-5 pr-2 w-10">
-                <input
-                  type="checkbox"
-                  checked={isAllPageSelected}
-                  ref={el => {
-                    if (el) el.indeterminate = isSomePageSelected;
-                  }}
-                  onChange={toggleSelectPage}
-                  className="w-4 h-4 rounded border-[#CCCCCC] text-[#EA4B0B] focus:ring-[#EA4B0B] cursor-pointer"
-                  title={isAllPageSelected ? "Deselect page" : "Select all on page"}
-                />
-              </th>
-              <th className="py-3.5 px-4 font-semibold">Company / Name</th>
-              <th className="py-3.5 px-4 font-semibold">Scraper Engine</th>
-              <th className="py-3.5 px-4 font-semibold">API Provider / Source</th>
-              <th className="py-3.5 px-4 font-semibold">Category</th>
-              <th className="py-3.5 px-4 font-semibold">Location</th>
-              <th className="py-3.5 px-4 font-semibold">Contact</th>
-              <th className="py-3.5 px-4 font-semibold">Website Status</th>
-              <th className="py-3.5 px-4 font-semibold">Lead Status</th>
-              <th className="py-3.5 pr-5 pl-3 font-semibold text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#F0F0F0] text-sm">
-            {paginatedLeads.length > 0 ? (
-              paginatedLeads.map((lead) => {
-                const isSelected = selectedIds.has(lead.id);
-                const providerBadge = getProviderBadge(lead.source);
-                const scraperBadge = getScraperBadge(lead.scraperId, lead.scraperName);
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-1">Phone Number</label>
+                  <input
+                    type="tel"
+                    placeholder="+1 (555) 000-0000"
+                    value={newClientForm.phone}
+                    onChange={(e) => setNewClientForm({ ...newClientForm, phone: e.target.value })}
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none"
+                  />
+                </div>
 
-                return (
-                  <tr 
-                    key={lead.id} 
-                    className={`transition-colors group ${
-                      isSelected 
-                        ? 'bg-[#FFF8F5] hover:bg-[#FFF3EC]' 
-                        : 'hover:bg-[#FAFAFA]'
-                    }`}
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-1">Location / City</label>
+                  <input
+                    type="text"
+                    placeholder="New York, US"
+                    value={newClientForm.location}
+                    onChange={(e) => setNewClientForm({ ...newClientForm, location: e.target.value })}
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-1">Category / Tag</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. SaaS, Healthcare, E-commerce"
+                    value={newClientForm.category}
+                    onChange={(e) => setNewClientForm({ ...newClientForm, category: e.target.value })}
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-1">Deal Value ($)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="5000"
+                    value={newClientForm.deal_value}
+                    onChange={(e) => setNewClientForm({ ...newClientForm, deal_value: e.target.value })}
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-1">Initial Status</label>
+                  <select
+                    value={newClientForm.status}
+                    onChange={(e) => setNewClientForm({ ...newClientForm, status: e.target.value })}
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none cursor-pointer"
                   >
-                    
-                    {/* Row Selection Checkbox */}
-                    <td className="py-3.5 pl-5 pr-2 w-10">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelectRow(lead.id)}
-                        className="w-4 h-4 rounded border-[#CCCCCC] text-[#EA4B0B] focus:ring-[#EA4B0B] cursor-pointer"
-                      />
-                    </td>
-
-                    {/* Name & Website */}
-                    <td className="py-3.5 px-4 font-semibold text-[#111111] text-sm">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-[#F5F5F5] border border-[#E7E7E7] flex items-center justify-center text-[11px] font-bold text-[#111] shrink-0">
-                          {(lead.name || '?').charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-gray-900">{lead.name}</span>
-                            {lead.website && (
-                              <a href={lead.website} target="_blank" rel="noopener noreferrer" className="text-[#8A8A8A] hover:text-[#EA4B0B] transition-colors" title={`Visit ${lead.website}`}>
-                                <ExternalLink className="w-3 h-3" />
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* Scraper Engine Badge */}
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-medium border ${scraperBadge.color}`}>
-                        <Cpu className="w-3 h-3 shrink-0 opacity-80" />
-                        <span>{scraperBadge.label}</span>
-                      </span>
-                    </td>
-
-                    {/* API Provider / Key Source Badge */}
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-medium border ${providerBadge.color}`}>
-                        <Key className="w-3 h-3 shrink-0 opacity-80" />
-                        <span>{providerBadge.label}</span>
-                      </span>
-                    </td>
-
-                    {/* Category */}
-                    <td className="py-3.5 px-4 text-[#8A8A8A] text-sm max-w-[150px] truncate" title={lead.category}>
-                      {lead.category || 'Commercial Services'}
-                    </td>
-
-                    {/* Location */}
-                    <td className="py-3.5 px-4 text-[#111111] text-sm max-w-[160px] truncate" title={lead.location}>
-                      {lead.location}
-                    </td>
-
-                    {/* Contact Details */}
-                    <td className="py-3.5 px-4 text-sm">
-                      <div className="space-y-0.5">
-                        {lead.email ? (
-                          <div className="flex items-center gap-1.5 text-[#111111]">
-                            <Mail className="w-3 h-3 text-[#8A8A8A] shrink-0" />
-                            <span className="truncate max-w-[150px] text-xs font-mono">{lead.email}</span>
-                            <button
-                              onClick={() => handleCopy(lead.email, `mail-${lead.id}`)}
-                              className="text-[#8A8A8A] hover:text-[#111111]"
-                              title="Copy email"
-                            >
-                              {copiedId === `mail-${lead.id}` ? (
-                                <Check className="w-3 h-3 text-emerald-600" />
-                              ) : (
-                                <Copy className="w-3 h-3" />
-                              )}
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-[#8A8A8A] italic text-xs">—</span>
-                        )}
-
-                        {lead.phone && (
-                          <div className="flex items-center gap-1.5 text-[#8A8A8A] text-xs font-mono">
-                            <Phone className="w-3 h-3 shrink-0" />
-                            <span>{lead.phone}</span>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Website Status */}
-                    <td className="py-3.5 px-4">
-                      {(() => {
-                        const ws = lead.website_status || (lead.website ? 'Website Exists' : 'No Website');
-                        const wsStyles = {
-                          'No Website': 'bg-[#111111] text-white',
-                          'Website Exists': 'bg-emerald-50 text-emerald-700 border border-emerald-200',
-                          'Modern Website': 'bg-emerald-50 text-emerald-700 border border-emerald-200',
-                          'Outdated Website': 'bg-[#FFF1EB] text-[#EA4B0B] border border-orange-200',
-                          'Website Unreachable': 'bg-amber-50 text-amber-700 border border-amber-200',
-                          'Unknown': 'bg-[#F5F5F5] text-[#8A8A8A] border border-[#E7E7E7]',
-                        };
-                        return (
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-mono font-medium ${wsStyles[ws] || wsStyles['Unknown']}`}>
-                            {ws}
-                          </span>
-                        );
-                      })()}
-                    </td>
-
-                    {/* Lead Status */}
-                    <td className="py-3.5 px-4">
-                      {(() => {
-                        const status = lead.opportunityType || lead.lead_status || 'new';
-                        const statusStyles = {
-                          'no website': 'bg-[#111111] text-white border border-[#111111]',
-                          'outdated website ui': 'bg-[#FFF1EB] text-[#EA4B0B] border border-orange-200',
-                          'new': 'bg-[#F5F5F5] text-[#111111] border border-[#E7E7E7]',
-                          'contacted': 'bg-amber-50 text-amber-800 border border-amber-200',
-                          'qualified': 'bg-emerald-50 text-emerald-700 border border-emerald-200',
-                          'converted': 'bg-[#111111] text-white border border-[#111111]',
-                          'in review': 'bg-[#EA4B0B]/10 text-[#EA4B0B] border border-[#EA4B0B]/20',
-                        };
-                        const style = statusStyles[status.toLowerCase()] || 'bg-[#F5F5F5] text-[#111111] border border-[#E7E7E7]';
-                        return (
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium ${style}`}>
-                            {status}
-                          </span>
-                        );
-                      })()}
-                    </td>
-
-                    {/* Actions: Inspect & Delete */}
-                    <td className="py-3.5 pr-5 pl-3 text-right">
-                      <div className="inline-flex items-center gap-1.5">
-                        <button
-                          onClick={() => onSelectLead(lead)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-[#E7E7E7] hover:bg-[#111111] hover:text-white hover:border-[#111111] transition-all cursor-pointer"
-                          title="Inspect full lead signals and provenance"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Inspect</span>
-                        </button>
-
-                        <button
-                          onClick={() => setLeadToDelete(lead)}
-                          className="p-1.5 text-[#8A8A8A] hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                          title="Permanently delete this lead"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-
-                  </tr>
-                );
-              })
-            ) : (
-              <tr>
-                <td colSpan="10" className="py-14 text-center text-sm text-[#8A8A8A]">
-                  <AlertCircle className="w-7 h-7 mx-auto mb-2 text-[#CCCCCC]" />
-                  <p className="font-semibold text-gray-700">No leads match your active filters.</p>
-                  <p className="text-xs text-gray-500 mt-1">Try clearing search, adjusting your scraper/API provider filter, or launching a new scraper run.</p>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination Footer */}
-      <div className="px-6 py-4 border-t border-[#E7E7E7] bg-[#F5F5F5] flex items-center justify-between text-xs font-mono">
-        <span className="text-[#8A8A8A] font-medium">
-          Page {currentPage} of {totalPages} ({filteredLeads.length} total leads matching filters)
-        </span>
-
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-            disabled={currentPage === 1}
-            className="p-1.5 rounded border border-[#E7E7E7] bg-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#FAFAFA]"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          
-          <button
-            onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-            disabled={currentPage === totalPages}
-            className="p-1.5 rounded border border-[#E7E7E7] bg-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#FAFAFA]"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* ── Single Lead Permanent Deletion Confirmation Modal ── */}
-      {leadToDelete && (
-        <div className="fixed inset-0 z-50 overflow-hidden bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-[#E7E7E7] animate-in zoom-in-95 duration-150">
-            <div className="flex items-center gap-3 text-red-600 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-                <Trash2 className="w-5 h-5 text-red-600" />
+                    <option value="new">New</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="follow-up">Follow-up</option>
+                    <option value="interested">Interested</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </div>
               </div>
+
               <div>
-                <h3 className="text-base font-bold text-[#111111]">Permanently Delete Lead?</h3>
-                <p className="text-xs text-[#8A8A8A]">This action is irreversible.</p>
+                <label className="block text-gray-700 font-semibold mb-1 text-xs">Notes / Deal Brief</label>
+                <textarea
+                  rows={2}
+                  placeholder="Key background info or client requirements..."
+                  value={newClientForm.notes}
+                  onChange={(e) => setNewClientForm({ ...newClientForm, notes: e.target.value })}
+                  className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none text-xs"
+                />
               </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setIsAddClientOpen(false)}
+                  className="px-4 py-2 border border-gray-200 text-xs font-semibold text-gray-700 rounded-lg hover:bg-gray-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingClient}
+                  className="px-4 py-2 bg-[#ea580c] hover:bg-[#c2410c] text-white text-xs font-semibold rounded-lg shadow-sm active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isSubmittingClient ? 'Saving...' : 'Add Client'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Lost Reason Modal */}
+      {lostModalLeadId && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-2xl max-w-sm w-full p-5 space-y-4">
+            <div className="flex items-center gap-2 text-rose-600">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h3 className="text-sm font-bold text-gray-900">Why was this client lost?</h3>
             </div>
-
-            <div className="bg-[#F5F5F5] border border-[#E7E7E7] rounded-xl p-3 mb-5 space-y-1.5 text-xs font-mono">
-              <div className="font-bold text-[#111111]">{leadToDelete.name}</div>
-              <div className="text-[#8A8A8A]">Location: {leadToDelete.location}</div>
-              <div className="text-[#8A8A8A]">Scraper: {leadToDelete.scraperName || leadToDelete.scraperId}</div>
-              <div className="text-[#8A8A8A]">API Source: {leadToDelete.source}</div>
-            </div>
-
-            <p className="text-xs text-gray-600 mb-6">
-              Are you sure you want to permanently delete this lead? It will be removed from your database and storage permanently.
-            </p>
-
-            <div className="flex items-center justify-end gap-3">
+            <textarea
+              required
+              rows={3}
+              placeholder="e.g. Budget constraints, chose competitor, unreachable"
+              value={lostReasonInput}
+              onChange={(e) => setLostReasonInput(e.target.value)}
+              className="w-full text-xs p-3 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-gray-900 focus:outline-none font-normal"
+            />
+            <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setLeadToDelete(null)}
-                className="px-4 py-2 border border-[#E7E7E7] rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+                onClick={() => setLostModalLeadId(null)}
+                className="px-3.5 py-2 border border-gray-200 text-xs font-semibold text-gray-700 rounded-lg hover:bg-gray-50 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={confirmDeleteSingle}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+                onClick={handleConfirmLostStatus}
+                className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg cursor-pointer"
               >
-                Yes, Delete Permanently
+                Confirm Lost
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Bulk Delete Permanent Confirmation Modal ── */}
-      {isBulkDeleting && (
-        <div className="fixed inset-0 z-50 overflow-hidden bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-[#E7E7E7] animate-in zoom-in-95 duration-150">
-            <div className="flex items-center gap-3 text-red-600 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5 text-red-600" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-[#111111]">Delete {selectedIds.size} Leads Permanently?</h3>
-                <p className="text-xs text-[#8A8A8A]">This bulk action cannot be undone.</p>
-              </div>
-            </div>
-
-            <p className="text-xs text-gray-600 mb-6">
-              You are about to permanently delete <strong className="text-red-600 font-bold">{selectedIds.size} selected leads</strong> from your storage. These records will be removed immediately.
-            </p>
-
-            <div className="flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setIsBulkDeleting(false)}
-                className="px-4 py-2 border border-[#E7E7E7] rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmDeleteBulk}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow-sm transition-colors cursor-pointer"
-              >
-                Delete {selectedIds.size} Leads Permanently
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* CSV / Excel Import Modal */}
+      <CsvImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImportSuccess={(importedCount) => {
+          setImportNotification(`Successfully imported ${importedCount} client${importedCount === 1 ? '' : 's'}!`);
+          if (onLeadsUpdated) {
+            onLeadsUpdated();
+          }
+          setTimeout(() => setImportNotification(null), 5000);
+        }}
+      />
     </div>
   );
 }

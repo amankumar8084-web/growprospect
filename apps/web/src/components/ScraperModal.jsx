@@ -74,7 +74,7 @@ export default function ScraperModal({ isOpen, onClose, scraper, onLaunch }) {
               </span>
               <span className="text-xs text-[#8A8A8A] font-mono">Run Configuration</span>
             </div>
-            <h2 className="text-lg font-bold text-[#111111] mt-1">
+            <h2 className="text-lg font-semibold text-[#111111] mt-1">
               Configure {scraper.name}
             </h2>
           </div>

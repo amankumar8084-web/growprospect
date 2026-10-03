@@ -6,25 +6,94 @@ import ScraperModal from './components/ScraperModal';
 import ActiveRunMonitor from './components/ActiveRunMonitor';
 import LeadsTable from './components/LeadsTable';
 import LeadDetailDrawer from './components/LeadDetailDrawer';
-import RunsView from './components/RunsView';
-import ScrapersView from './components/ScrapersView';
-import SettingsView from './components/SettingsView';
-import ImportPage from './pages/ImportPage';
+import TasksView from './components/TasksView';
+import DashboardView from './components/DashboardView';
+import UserManagementView from './components/UserManagementView';
+import PipelineView from './components/PipelineView';
+import NotificationPopover from './components/NotificationPopover';
 import { storage } from './services/storage';
 import { scraperEngine } from './services/scraperEngine';
-import { SignedIn, SignedOut, SignIn, UserButton } from '@clerk/clerk-react';
-import { Menu, Plus, Play } from 'lucide-react';
+import { sessionManager } from './services/sessionManager';
+import { crmService } from './services/crmService';
+import { SignedIn, SignedOut, SignIn, UserButton, useSession, useUser, useAuth } from '@clerk/clerk-react';
+import { Menu, Play, Bell, Search } from 'lucide-react';
 
 export default function App() {
+  const { session } = useSession();
+  const { user } = useUser();
+  const { signOut, orgId, orgRole, isLoaded } = useAuth();
+
   const [currentTab, setCurrentTab] = useState('dashboard');
-  const [scrapers, setScrapers] = useState(storage.getScrapers());
-  const [runs, setRuns] = useState(storage.getRuns());
-  const [leads, setLeads] = useState(storage.getLeads());
+  const [scrapers, setScrapers] = useState([]);
+  const [runs, setRuns] = useState([]);
+  const [leads, setLeads] = useState([]);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [tasksDueTodayCount, setTasksDueTodayCount] = useState(0);
   
   const [selectedLead, setSelectedLead] = useState(null);
   const [modalScraper, setModalScraper] = useState(null);
   const [timeFilter, setTimeFilter] = useState('7d');
+
+  // Wait for Clerk to fully initialize before syncing session
+  useEffect(() => {
+    if (!isLoaded) return;
+    setScrapers(storage.getScrapers());
+    setRuns(storage.getRuns());
+    setLeads(storage.getLeads());
+  }, [isLoaded]);
+
+  // Synchronize active Clerk session & Organization with central sessionManager
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (orgId) {
+      sessionManager.setOrgId(orgId);
+    }
+    if (orgRole) {
+      sessionManager.setRole(orgRole);
+    } else {
+      sessionManager.setRole('admin');
+    }
+    if (session) {
+      // Configure Access Token and Refresh Token (skipCache) suppliers
+      sessionManager.setTokenGetter(
+        async () => {
+          return await session.getToken();
+        },
+        async () => {
+          return await session.getToken({ skipCache: true });
+        }
+      );
+      sessionManager.setSessionInfo({
+        sessionId: session.id,
+        status: session.status,
+        lastActiveAt: session.lastActiveAt,
+        expireAt: session.expireAt,
+        orgId: orgId || 'org_default',
+        role: orgRole || 'admin',
+        user: {
+          id: user?.id,
+          fullName: user?.fullName || user?.username || 'Admin User',
+          primaryEmail: user?.primaryEmailAddress?.emailAddress || 'admin@growprospect.local',
+          imageUrl: user?.imageUrl
+        }
+      });
+    }
+  }, [session, user, orgId, orgRole]);
+
+  // Refresh tasks due today for sidebar badge
+  const refreshTasksDueToday = async () => {
+    try {
+      const todayTasks = await crmService.getTasks({ due: 'today', mine: true, done: false });
+      setTasksDueTodayCount(Array.isArray(todayTasks) ? todayTasks.length : 0);
+    } catch {
+      // Backend sync is best-effort
+    }
+  };
+
+  useEffect(() => {
+    refreshTasksDueToday();
+  }, [user, session]);
 
   useEffect(() => {
     const unsubStorage = storage.subscribe(() => {
@@ -77,7 +146,7 @@ export default function App() {
   const handleDeleteLead = async (leadId) => {
     storage.deleteLead(leadId);
     try {
-      await fetch(`http://localhost:3001/api/leads/${encodeURIComponent(leadId)}`, { method: 'DELETE' });
+      await sessionManager.authFetch(`http://localhost:3001/api/leads/${encodeURIComponent(leadId)}`, { method: 'DELETE' });
     } catch {
       // Backend sync is best-effort
     }
@@ -86,7 +155,7 @@ export default function App() {
   const handleDeleteLeads = async (leadIds) => {
     storage.deleteLeads(leadIds);
     try {
-      await fetch('http://localhost:3001/api/leads/bulk-delete', {
+      await sessionManager.authFetch('http://localhost:3001/api/leads/bulk-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids: leadIds })
@@ -95,6 +164,18 @@ export default function App() {
       // Backend sync is best-effort
     }
   };
+
+  // Show spinner while Clerk loads to prevent null useContext crash
+  if (!isLoaded) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-[#EA4B0B] border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-mono text-[#8A8A8A] tracking-wider uppercase">Loading GrowProspect…</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex font-sans">
@@ -124,166 +205,114 @@ export default function App() {
         setCurrentTab={setCurrentTab}
         leadsCount={leads.length}
         runningJobsCount={runningJobsCount}
+        tasksDueTodayCount={tasksDueTodayCount}
         mobileOpen={mobileSidebarOpen}
         setMobileOpen={setMobileSidebarOpen}
+        isCollapsed={isSidebarCollapsed}
+        setIsCollapsed={setIsSidebarCollapsed}
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 md:pl-64">
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-200 ease-in-out ${isSidebarCollapsed ? 'md:pl-20' : 'md:pl-64'}`}>
 
-        {/* Mobile Header */}
-        <header className="md:hidden sticky top-0 z-30 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        {/* Global Persistent Top Header (Desktop & Mobile) */}
+        <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-gray-100 px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => setMobileSidebarOpen(true)}
-              className="p-1.5 text-gray-900 hover:bg-gray-100 rounded-md"
+              className="md:hidden p-1.5 text-gray-700 hover:bg-gray-100 rounded-lg cursor-pointer flex items-center gap-2"
+              title="Open Navigation"
             >
               <Menu className="w-5 h-5" />
+              <img src="/favicon.svg" alt="GrowProspect" className="w-5 h-5 object-contain" />
             </button>
-            <img src="/logo-horizontal.png" alt="GrowProspect" className="h-7 w-auto object-contain" />
+
+            {/* Quick Search on Desktop / Tablet */}
+            <div className="relative hidden sm:block">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Quick search clients, tasks, or pipeline..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setCurrentTab('leads');
+                  }
+                }}
+                className="pl-9 pr-4 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg w-64 md:w-80 focus:w-96 focus:bg-white focus:border-orange-400 focus:outline-none transition-all placeholder:text-gray-400 text-gray-800"
+              />
+            </div>
           </div>
-          <UserButton afterSignOutUrl="/" />
+
+          <div className="flex items-center gap-3">
+            {/* Audio Enabled Notification Center */}
+            <NotificationPopover 
+              onNavigate={(tab) => setCurrentTab(tab)}
+              onSelectLead={(lead) => setSelectedLead(lead)}
+              tasksDueTodayCount={tasksDueTodayCount}
+            />
+
+            {/* Top Right Profile Avatar */}
+            <div className="flex items-center pl-1">
+              <UserButton 
+                afterSignOutUrl="/" 
+                appearance={{
+                  elements: {
+                    userButtonAvatarBox: 'w-8 h-8 rounded-full ring-2 ring-gray-100 hover:ring-[#ea580c]/30 transition-all',
+                    userButtonPopoverCard: 'shadow-2xl border border-gray-100 rounded-2xl'
+                  }
+                }}
+              />
+            </div>
+          </div>
         </header>
 
         {/* Main Body */}
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
           
           {/* Render Tab Views */}
           {currentTab === 'dashboard' && (
-            <div>
-              {/* Page Editorial Header */}
-              <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-6 mb-6 border-b border-gray-200">
-                <div>
-                  <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-                    Dashboard
-                  </h1>
-                  <p className="text-sm text-gray-500 mt-1 max-w-2xl">
-                    Overview of your lead discovery engines and pipeline.
-                  </p>
-                </div>
-
-                {/* Time filter tags & Trigger action */}
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <div className="flex items-center bg-[#F5F5F5] border border-[#E7E7E7] rounded-md p-0.5 text-xs font-mono">
-                    {['today', '7d', '30d', 'all'].map((tf) => (
-                      <button
-                        key={tf}
-                        onClick={() => setTimeFilter(tf)}
-                        className={`px-2.5 py-1 rounded capitalize transition-all ${
-                          timeFilter === tf
-                            ? 'bg-white text-[#111111] font-semibold shadow-2xs'
-                            : 'text-[#8A8A8A] hover:text-[#111111]'
-                        }`}
-                      >
-                        {tf === 'today' ? 'Today' : tf === '7d' ? '7 Days' : tf === '30d' ? '30 Days' : 'All Time'}
-                      </button>
-                    ))}
-                  </div>
-
-                  <button
-                    onClick={handleTriggerAll}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-[#EA4B0B] hover:bg-[#d03f07] text-white text-sm font-semibold rounded-md shadow-sm transition-colors cursor-pointer"
-                  >
-                    <Play className="w-4 h-4 fill-current" />
-                    <span>Run Next Engine</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Real Analytics Bar */}
-              <MetricsBar
-                leads={leads}
-                leadsCount={leads.length}
-                activeScrapersCount={scrapers.length}
-                runningJobsCount={runningJobsCount}
-                runs={runs}
-                timeFilter={timeFilter}
-              />
-
-              {/* Active Run Diagnostic Panel (Progress & Live Event Stream) */}
-              <ActiveRunMonitor
-                activeRun={activeRun}
-                onPause={handlePauseRun}
-                onStop={handleStopRun}
-                onViewAllRuns={() => setCurrentTab('runs')}
-              />
-
-              {/* Recent Leads Preview */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold tracking-tight text-gray-900">
-                    Recent Discovered Leads
-                  </h2>
-                  <button
-                    onClick={() => setCurrentTab('leads')}
-                    className="text-sm font-semibold text-[#111111] hover:text-[#EA4B0B] transition-colors"
-                  >
-                    View All Leads →
-                  </button>
-                </div>
-                <LeadsTable
-                  title="Aggregated Leads"
-                  description="Most recent leads discovered across all engines."
-                  leads={leads.slice(0, 10)}
-                  onSelectLead={(lead) => setSelectedLead(lead)}
-                  onDeleteLead={handleDeleteLead}
-                  onDeleteLeads={handleDeleteLeads}
-                />
-              </div>
-            </div>
-          )}
-
-          {currentTab === 'scrapers' && (
-            <ScrapersView
-              scrapers={scrapers}
-              onConfigure={handleLaunchModal}
-              onLaunchDirect={handleLaunchDirect}
+            <DashboardView
+              onSelectLead={(lead) => setSelectedLead(lead)}
+              onNavigate={(tab) => setCurrentTab(tab)}
             />
           )}
 
-          {currentTab === 'runs' && (
-            <RunsView
-              runs={runs}
-              onPauseRun={handlePauseRun}
-              onStopRun={handleStopRun}
-              onRerun={handleLaunchDirect}
+          {currentTab === 'pipeline' && (
+            <PipelineView
+              onSelectLead={(lead) => setSelectedLead(lead)}
+              currentRole={sessionManager.getRole()}
+              currentUserId={user?.id}
+            />
+          )}
+
+          {currentTab === 'tasks' && (
+            <TasksView
+              onSelectLead={(lead) => setSelectedLead(lead)}
+              onTasksChanged={refreshTasksDueToday}
             />
           )}
 
           {currentTab.startsWith('leads') && (
             <div className="space-y-6">
               <LeadsTable
-                title="Discovered Leads & Prospects"
-                description="Explore all pipeline leads. Filter by scraper engine, API provider/key, inspect signals, or select all / individual leads to permanently delete."
+                title="Clients"
                 leads={leads}
                 initialScraper={currentTab.includes('_') ? currentTab.replace('leads_', '') : 'ALL'}
                 onSelectLead={(lead) => setSelectedLead(lead)}
                 onDeleteLead={handleDeleteLead}
                 onDeleteLeads={handleDeleteLeads}
+                onLeadsUpdated={() => setLeads(storage.getLeads())}
               />
             </div>
           )}
 
-          {currentTab === 'import' && (
-            <ImportPage />
-          )}
-
-          {currentTab === 'settings' && (
-            <SettingsView />
+          {(currentTab === 'users' || currentTab === 'settings') && (
+            <UserManagementView />
           )}
 
         </main>
 
-        {/* Footer */}
-        <footer className="border-t border-gray-200 bg-white py-6 mt-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-500">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-gray-900">ScrapeCore</span>
-              <span>•</span>
-              <span>Lead Discovery Platform</span>
-            </div>
-          </div>
-        </footer>
+
 
       </div>
 
@@ -298,6 +327,11 @@ export default function App() {
         lead={selectedLead}
         onClose={() => setSelectedLead(null)}
         onDeleteLead={handleDeleteLead}
+        onLeadUpdated={(updatedLead) => {
+          setSelectedLead(updatedLead);
+          setLeads(storage.getLeads());
+          refreshTasksDueToday();
+        }}
       />
       </SignedIn>
     </div>

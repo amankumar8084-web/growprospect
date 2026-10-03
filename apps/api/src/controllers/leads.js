@@ -3,12 +3,13 @@ const { pool } = require('../db');
 // GET /api/leads
 const getLeads = async (req, res) => {
   try {
-    const { page = 1, limit = 50, search, source, status } = req.query;
+    const { page = 1, limit = 50, search, source, status, pipeline_stage, assigned_to } = req.query;
+    const orgId = req.auth?.orgId || req.headers['x-org-id'] || 'org_default';
     const offset = (page - 1) * limit;
 
-    const conditions = [];
-    const values = [];
-    let pIndex = 1;
+    const conditions = [`(org_id = $1 OR org_id = 'org_default')`];
+    const values = [orgId];
+    let pIndex = 2;
 
     if (search) {
       conditions.push(`(name ILIKE $${pIndex} OR company_name ILIKE $${pIndex} OR email ILIKE $${pIndex})`);
@@ -23,8 +24,16 @@ const getLeads = async (req, res) => {
       conditions.push(`lead_status = $${pIndex++}`);
       values.push(status);
     }
+    if (pipeline_stage) {
+      conditions.push(`pipeline_stage = $${pIndex++}`);
+      values.push(pipeline_stage);
+    }
+    if (assigned_to) {
+      conditions.push(`assigned_to = $${pIndex++}`);
+      values.push(assigned_to);
+    }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
     
     // Get total count
     const countQuery = `SELECT COUNT(*) FROM leads ${whereClause}`;
@@ -33,7 +42,8 @@ const getLeads = async (req, res) => {
 
     // Get paginated data
     const dataQuery = `
-      SELECT id, name, company_name, category, city, country, phone, email, website, source, lead_status, created_at
+      SELECT id, org_id, name, company_name, category, city, country, phone, email, website, source, lead_status,
+             pipeline_stage, deal_value, assigned_to, assigned_to_name, last_activity_at, created_at
       FROM leads
       ${whereClause}
       ORDER BY created_at DESC
@@ -63,7 +73,11 @@ const getLeads = async (req, res) => {
 const getLeadById = async (req, res) => {
   try {
     const { id } = req.params;
-    const { rows } = await pool.query('SELECT * FROM leads WHERE id = $1', [id]);
+    const orgId = req.auth?.orgId || req.headers['x-org-id'] || 'org_default';
+    const { rows } = await pool.query(
+      'SELECT * FROM leads WHERE id = $1 AND (org_id = $2 OR org_id = \'org_default\')',
+      [id, orgId]
+    );
     
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
@@ -80,7 +94,11 @@ const getLeadById = async (req, res) => {
 const updateLead = async (req, res) => {
   try {
     const { id } = req.params;
-    const { lead_status, notes, name, company_name, email, phone, website } = req.body;
+    const orgId = req.auth?.orgId || req.headers['x-org-id'] || 'org_default';
+    const {
+      lead_status, notes, name, company_name, email, phone, website,
+      pipeline_stage, deal_value, assigned_to, assigned_to_name
+    } = req.body;
     
     const updates = [];
     const values = [];
@@ -93,15 +111,26 @@ const updateLead = async (req, res) => {
     if (email !== undefined) { updates.push(`email = $${pIndex++}`); values.push(email); }
     if (phone !== undefined) { updates.push(`phone = $${pIndex++}`); values.push(phone); }
     if (website !== undefined) { updates.push(`website = $${pIndex++}`); values.push(website); }
+    if (pipeline_stage !== undefined) { updates.push(`pipeline_stage = $${pIndex++}`); values.push(pipeline_stage); }
+    if (deal_value !== undefined) { updates.push(`deal_value = $${pIndex++}`); values.push(Number(deal_value)); }
+    if (assigned_to !== undefined) { updates.push(`assigned_to = $${pIndex++}`); values.push(assigned_to); }
+    if (assigned_to_name !== undefined) { updates.push(`assigned_to_name = $${pIndex++}`); values.push(assigned_to_name); }
 
     if (updates.length === 0) {
       return res.status(400).json({ success: false, message: 'No fields to update' });
     }
 
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
+    updates.push(`last_activity_at = CURRENT_TIMESTAMP`);
     values.push(id);
+    values.push(orgId);
 
-    const query = `UPDATE leads SET ${updates.join(', ')} WHERE id = $${pIndex} RETURNING *`;
+    const query = `
+      UPDATE leads
+      SET ${updates.join(', ')}
+      WHERE id = $${pIndex++} AND (org_id = $${pIndex} OR org_id = 'org_default')
+      RETURNING *
+    `;
     
     const { rows } = await pool.query(query, values);
     
@@ -120,7 +149,11 @@ const updateLead = async (req, res) => {
 const deleteLead = async (req, res) => {
   try {
     const { id } = req.params;
-    const { rowCount } = await pool.query('DELETE FROM leads WHERE id = $1', [id]);
+    const orgId = req.auth?.orgId || req.headers['x-org-id'] || 'org_default';
+    const { rowCount } = await pool.query(
+      'DELETE FROM leads WHERE id = $1 AND (org_id = $2 OR org_id = \'org_default\')',
+      [id, orgId]
+    );
     
     if (rowCount === 0) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
@@ -136,11 +169,12 @@ const deleteLead = async (req, res) => {
 // GET /api/leads/export
 const exportLeads = async (req, res) => {
   try {
-    const { search, source, status, format = 'csv' } = req.query;
+    const { search, source, status, pipeline_stage, format = 'csv' } = req.query;
+    const orgId = req.auth?.orgId || req.headers['x-org-id'] || 'org_default';
 
-    const conditions = [];
-    const values = [];
-    let pIndex = 1;
+    const conditions = [`(org_id = $1 OR org_id = 'org_default')`];
+    const values = [orgId];
+    let pIndex = 2;
 
     if (search) {
       conditions.push(`(name ILIKE $${pIndex} OR company_name ILIKE $${pIndex} OR email ILIKE $${pIndex})`);
@@ -155,11 +189,16 @@ const exportLeads = async (req, res) => {
       conditions.push(`lead_status = $${pIndex++}`);
       values.push(status);
     }
+    if (pipeline_stage) {
+      conditions.push(`pipeline_stage = $${pIndex++}`);
+      values.push(pipeline_stage);
+    }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
     
     const query = `
-      SELECT name, company_name, email, phone, website, linkedin_url, category, address, city, state, country, source, lead_status, notes, created_at
+      SELECT name, company_name, email, phone, website, linkedin_url, category, address, city, state, country, source,
+             lead_status, pipeline_stage, deal_value, assigned_to_name, notes, created_at
       FROM leads
       ${whereClause}
       ORDER BY created_at DESC

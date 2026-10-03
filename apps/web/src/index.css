@@ -21,15 +21,121 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-optical-sizing: auto;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   background-color: var(--background);
   color: var(--text);
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 1.5;
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ==========================================================================
+   Typography System — Swiss-Minimal Hierarchy (Inter)
+   ========================================================================== */
+
+/* 1. Hero Headlines (H1) — Bold / Extra Bold (700 or 800) with slight negative tracking */
+h1, 
+.hero-headline,
+.font-hero,
+.font-h1 {
+  font-family: var(--font-sans);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+/* 2. Section Headings (H2, H3) — Semi Bold (600) */
+h2, 
+.section-heading-h2,
+.font-h2 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+h3, 
+.section-heading-h3,
+.font-h3 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+h4, h5, h6 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* 3. Body Copy & Paragraphs — Regular (400) at 16px for maximum readability */
+p, 
+.body-copy, 
+.font-body,
+input, 
+textarea, 
+select {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* 4. UI Components (Buttons, Tabs, Nav) — Medium (500) */
+button, 
+[role="button"], 
+[role="tab"], 
+.btn, 
+.tab-item, 
+.ui-component,
+.font-ui {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+/* 5. Captions & Data Tables — Regular / Medium (400 or 500), 12px–14px with OpenType tnum */
+table, 
+.data-table, 
+.font-table, 
+caption, 
+.caption, 
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'cv05' 1, 'zero' 1;
+}
+
+table th {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+table td {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+table td.font-medium,
+.table-num,
+.tabular-val {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.caption-text,
+caption {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Custom scrollbars */

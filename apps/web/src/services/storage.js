@@ -169,8 +169,11 @@ class StorageService {
 
   addLeadsBatch(leads) {
     const currentLeads = this.getLeads();
+    const existingEmails = new Set(currentLeads.filter(l => l.email).map(l => l.email.toLowerCase().trim()));
+    const existingPhones = new Set(currentLeads.filter(l => l.phone).map(l => l.phone.replace(/\D/g, '').slice(-10)));
+    const existingDomains = new Set(currentLeads.filter(l => l.website).map(l => l.website.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0].toLowerCase().trim()));
     const existingSignatures = new Set(
-      currentLeads.map((l) => `${l.name.toLowerCase().trim()}|${l.location.toLowerCase().trim()}`)
+      currentLeads.map((l) => `${(l.company_name || l.name || '').toLowerCase().trim()}|${(l.city || l.location || '').toLowerCase().trim()}`)
     );
 
     let saved = 0;
@@ -178,11 +181,54 @@ class StorageService {
     const newLeads = [];
 
     leads.forEach((l) => {
-      const sig = `${l.name.toLowerCase().trim()}|${l.location.toLowerCase().trim()}`;
-      if (existingSignatures.has(sig)) {
+      // Ensure required CRM fields for scraped leads: status New, owner Unassigned
+      l.status = 'new';
+      l.pipeline_stage = 'New';
+      l.owner_id = null;
+      l.assigned_to = null;
+      l.assigned_to_name = 'Unassigned';
+
+      // Ensure location split into city / state / country
+      if (!l.city && l.location) {
+        const parts = l.location.split(',').map((s) => s.trim());
+        if (parts.length >= 3) {
+          l.city = parts[0];
+          l.state = parts[1];
+          l.country = parts[2];
+        } else if (parts.length === 2) {
+          l.city = parts[0];
+          l.country = parts[1];
+          l.state = '';
+        } else {
+          l.city = parts[0];
+          l.country = 'US';
+          l.state = '';
+        }
+      } else if (!l.country) {
+        l.country = 'US';
+      }
+      if (!l.company_name && l.name) {
+        l.company_name = l.name;
+      }
+
+      const email = l.email ? l.email.toLowerCase().trim() : null;
+      const phone = l.phone ? l.phone.replace(/\D/g, '').slice(-10) : null;
+      const domain = l.website ? l.website.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0].toLowerCase().trim() : null;
+      const sig = `${(l.company_name || l.name || '').toLowerCase().trim()}|${(l.city || l.location || '').toLowerCase().trim()}`;
+
+      const isDup = (email && existingEmails.has(email)) ||
+        (phone && phone.length >= 7 && existingPhones.has(phone)) ||
+        (domain && existingDomains.has(domain)) ||
+        existingSignatures.has(sig);
+
+      if (isDup) {
         duplicates++;
       } else {
+        if (email) existingEmails.add(email);
+        if (phone && phone.length >= 7) existingPhones.add(phone);
+        if (domain) existingDomains.add(domain);
         existingSignatures.add(sig);
+
         newLeads.push(l);
         saved++;
       }

@@ -6,16 +6,22 @@ import {
   Database, 
   Settings, 
   Plus, 
-  Upload,
-  Zap, 
   X, 
   ShieldCheck, 
   ChevronRight,
+  ChevronLeft,
   User,
-  Radio
+  Users,
+  Radio,
+  Columns3,
+  CheckSquare,
+  UserCheck,
+  PanelLeftClose,
+  PanelLeftOpen,
+  SlidersHorizontal
 } from 'lucide-react';
 
-import { UserButton } from '@clerk/clerk-react';
+import { sessionManager } from '../services/sessionManager';
 
 export default function Sidebar({ 
   currentTab, 
@@ -23,28 +29,32 @@ export default function Sidebar({
   onNewScrapeClick, 
   leadsCount, 
   runningJobsCount,
+  tasksDueTodayCount = 0,
   mobileOpen,
-  setMobileOpen
+  setMobileOpen,
+  isCollapsed = false,
+  setIsCollapsed
 }) {
-  const scrapersList = [
-    { id: 'no-website-biz', label: 'No-Website Business Finder' },
-    { id: 'outdated-website-biz', label: 'Outdated-Website Business Finder' },
-    { id: 'tech-hiring', label: 'Tech Hiring Finder' },
-    { id: 'freelance-req', label: 'Freelancer Requirement Finder' }
-  ];
+  const userRole = sessionManager.getRole();
+  const orgId = sessionManager.getOrgId();
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Compass },
-    { id: 'scrapers', label: 'Scrapers', icon: Layers, badge: '4' },
-    { id: 'runs', label: 'Runs', icon: Terminal, activeCount: runningJobsCount },
-    { id: 'leads', label: 'Leads', icon: Database, badge: leadsCount ? `${leadsCount}` : null, subItems: scrapersList.map(s => ({ id: `leads_${s.id}`, label: s.label })) },
-    { id: 'import', label: 'Import Leads', icon: Upload },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'leads', label: 'Clients', icon: Users, badge: leadsCount ? `${leadsCount}` : null },
+    { id: 'pipeline', label: 'Pipeline', icon: Columns3, badge: '7 Stages' },
+    { id: 'tasks', label: 'Tasks', icon: CheckSquare, activeCount: tasksDueTodayCount, badge: tasksDueTodayCount > 0 ? `${tasksDueTodayCount} due` : null },
+    { id: 'users', label: 'Users', icon: UserCheck },
   ];
 
   const handleNavClick = (tabId) => {
     setCurrentTab(tabId);
     if (setMobileOpen) setMobileOpen(false);
+  };
+
+  const toggleCollapse = () => {
+    if (setIsCollapsed) {
+      setIsCollapsed(prev => !prev);
+    }
   };
 
   return (
@@ -59,22 +69,33 @@ export default function Sidebar({
 
       {/* Vertical Sidebar */}
       <aside 
-        className={`fixed top-0 bottom-0 left-0 z-50 w-64 bg-white border-r border-[#E7E7E7] flex flex-col justify-between transition-transform duration-200 ease-in-out md:translate-x-0 ${
+        className={`fixed top-0 bottom-0 left-0 z-50 bg-white border-r border-[#E7E7E7] flex flex-col justify-between transition-all duration-200 ease-in-out md:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        } ${isCollapsed ? 'w-20' : 'w-64'}`}
       >
         {/* Top: Brand Header */}
         <div>
-          <div className="h-16 px-5 border-b border-[#E7E7E7] flex items-center justify-between">
+          <div className={`h-16 border-b border-[#E7E7E7] flex items-center ${isCollapsed ? 'justify-center px-2' : 'justify-between px-5'}`}>
             <div 
               onClick={() => handleNavClick('dashboard')}
-              className="flex items-center gap-2 cursor-pointer group select-none"
+              className="flex items-center gap-2 cursor-pointer group select-none overflow-hidden"
+              title="GrowProspect"
             >
-              <img 
-                src="/logo-horizontal.png" 
-                alt="GrowProspect" 
-                className="h-9 w-auto max-w-[175px] object-contain transition-transform duration-150 group-hover:scale-[1.02]" 
-              />
+              {isCollapsed ? (
+                <div className="w-10 h-10 rounded-xl bg-orange-50/60 border border-orange-200/60 flex items-center justify-center group-hover:scale-105 transition-transform p-1.5">
+                  <img 
+                    src="/favicon.svg" 
+                    alt="GrowProspect" 
+                    className="w-7 h-7 object-contain" 
+                  />
+                </div>
+              ) : (
+                <img 
+                  src="/logo-horizontal.png" 
+                  alt="GrowProspect" 
+                  className="h-9 w-auto max-w-[175px] object-contain transition-transform duration-150 group-hover:scale-[1.02]" 
+                />
+              )}
             </div>
 
             {/* Close button on mobile */}
@@ -87,65 +108,67 @@ export default function Sidebar({
           </div>
 
           {/* Navigation Links */}
-          <nav className="px-3 space-y-1" aria-label="Sidebar Navigation">
-            <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-[#8A8A8A]">
-              Platform Navigation
-            </div>
+          <nav className="p-2 space-y-1" aria-label="Sidebar Navigation">
+            {!isCollapsed && (
+              <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                Platform Navigation
+              </div>
+            )}
 
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = currentTab === item.id || currentTab.startsWith(`${item.id}_`);
-              const isExpanded = isActive;
+              const isActive = currentTab === item.id || 
+                currentTab.startsWith(`${item.id}_`);
 
               return (
-                <div key={item.id} className="space-y-0.5">
+                <div key={item.id} className="relative group/item">
                   <button
-                    onClick={() => handleNavClick(item.subItems ? `${item.id}_${scrapersList[0].id}` : item.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                      isActive
-                        ? 'bg-[#111111] text-white'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-[#F5F5F5]'
+                    onClick={() => handleNavClick(item.id)}
+                    title={isCollapsed ? item.label : undefined}
+                    className={`w-full flex items-center rounded-xl transition-all cursor-pointer ${
+                      isCollapsed 
+                        ? `justify-center p-3 ${
+                            isActive 
+                              ? 'bg-[#111111] text-white shadow-xs' 
+                              : 'text-gray-500 hover:text-gray-900 hover:bg-[#F5F5F5]'
+                          }`
+                        : `justify-between px-3.5 py-2.5 text-sm font-medium ${
+                            isActive
+                              ? 'bg-[#111111] text-white'
+                              : 'text-gray-600 hover:text-gray-900 hover:bg-[#F5F5F5]'
+                          }`
                     }`}
                   >
-                    <div className="flex items-center gap-3">
-                      <Icon className={`w-5 h-5 ${isActive ? 'text-[#EA4B0B]' : 'text-gray-400'}`} />
-                      <span>{item.label}</span>
+                    <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'}`}>
+                      <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-[#EA4B0B]' : 'text-gray-400'}`} />
+                      {!isCollapsed && <span>{item.label}</span>}
                     </div>
 
-                    {item.activeCount > 0 && (
+                    {!isCollapsed && item.activeCount > 0 && (
                       <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-[#EA4B0B] text-white">
                         <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
                         {item.activeCount}
                       </span>
                     )}
 
-                    {item.badge && !item.activeCount && (
+                    {!isCollapsed && item.badge && !item.activeCount && (
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                         isActive ? 'bg-[#EA4B0B] text-white font-semibold' : 'bg-[#F5F5F5] text-gray-700 border border-[#E7E7E7]'
                       }`}>
                         {item.badge}
                       </span>
                     )}
+
+                    {/* Small Dot indicator for collapsed badge */}
+                    {isCollapsed && (item.activeCount > 0 || item.badge) && (
+                      <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#EA4B0B]" />
+                    )}
                   </button>
 
-                  {item.subItems && isExpanded && (
-                    <div className="pl-9 pr-2 space-y-0.5 pb-1">
-                      {item.subItems.map((sub) => {
-                        const isSubActive = currentTab === sub.id;
-                        return (
-                          <button
-                            key={sub.id}
-                            onClick={() => handleNavClick(sub.id)}
-                            className={`w-full flex items-center px-2 py-1.5 text-[11px] font-medium rounded transition-colors text-left ${
-                              isSubActive
-                                ? 'text-[#EA4B0B] bg-[#EA4B0B]/10 font-bold'
-                                : 'text-[#8A8A8A] hover:text-[#111111] hover:bg-[#F5F5F5]'
-                            }`}
-                          >
-                            <span className="truncate flex-1">{sub.label}</span>
-                          </button>
-                        );
-                      })}
+                  {/* Floating tooltip on collapsed mode hover */}
+                  {isCollapsed && (
+                    <div className="absolute left-full top-1/2 -translate-y-1/2 ml-3 px-2.5 py-1 bg-gray-900 text-white text-xs font-semibold rounded-lg shadow-xl opacity-0 pointer-events-none group-hover/item:opacity-100 transition-opacity z-60 whitespace-nowrap">
+                      {item.label}
                     </div>
                   )}
                 </div>
@@ -154,29 +177,28 @@ export default function Sidebar({
           </nav>
         </div>
 
-        <div className="p-3 border-t border-[#E7E7E7] bg-white">
-          <UserButton
-            showName
-            appearance={{
-              elements: {
-                rootBox: 'w-full',
-                userButtonBox: 'w-full flex-row-reverse justify-between items-center py-1 px-1.5 rounded-lg hover:bg-[#F5F5F5] transition-colors',
-                userButtonOuterIdentifier: 'text-xs font-semibold text-[#111111] truncate max-w-[130px]',
-                userButtonAvatarBox: 'w-7 h-7 rounded-full',
-                userButtonTrigger: 'w-full justify-between focus:shadow-none focus:outline-none focus:ring-0',
-                userButtonPopoverCard: 'shadow-xl border border-[#E7E7E7] rounded-xl max-w-[240px] w-[240px] text-xs overflow-hidden',
-                userButtonPopoverFooter: 'hidden',
-                userButtonPopoverMain: 'p-2 space-y-1',
-                userProfileIdentification: 'p-2.5 gap-2.5 border-b border-[#F0F0F0]',
-                userProfileIdentifier: 'text-xs font-bold text-[#111111]',
-                userProfileSecondaryIdentifier: 'text-[11px] text-[#8A8A8A] truncate max-w-[160px]',
-                userButtonPopoverActions: 'p-1.5 space-y-0.5',
-                userButtonPopoverActionButton: 'py-2 px-2.5 rounded-lg hover:bg-[#F5F5F5] text-xs font-medium text-[#111111] transition-colors',
-                userButtonPopoverActionButtonIcon: 'w-4 h-4 text-[#8A8A8A]',
-                userButtonPopoverActionButtonText: 'text-xs text-[#111111]',
-              },
-            }}
-          />
+        {/* Bottom Left Corner: Slider / Collapse Toggle Option */}
+        <div className="p-2 border-t border-[#E7E7E7] bg-white">
+          <button
+            type="button"
+            onClick={toggleCollapse}
+            title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            className={`w-full flex items-center rounded-xl text-gray-500 hover:text-gray-900 hover:bg-[#F5F5F5] transition-all cursor-pointer ${
+              isCollapsed ? 'justify-center p-3' : 'justify-between px-3 py-2 text-xs font-semibold'
+            }`}
+          >
+            {isCollapsed ? (
+              <ChevronRight className="w-5 h-5 text-gray-600" />
+            ) : (
+              <>
+                <div className="flex items-center gap-2 text-gray-600">
+                  <SlidersHorizontal className="w-4 h-4 text-gray-400" />
+                  <span>Collapse Sidebar</span>
+                </div>
+                <ChevronLeft className="w-4 h-4 text-gray-400" />
+              </>
+            )}
+          </button>
         </div>
 
       </aside>

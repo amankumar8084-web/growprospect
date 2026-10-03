@@ -1,16 +1,19 @@
-# React + Vite
+# GrowProspect Web Client
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Modern React + Vite frontend for GrowProspect B2B Sales Team CRM & Lead Discovery Platform.
 
-Currently, two official plugins are available:
+## Features
+- **Dashboard (`DashboardView`)**: 6 core KPIs, pipeline stage distribution, top locations, and quick client creation.
+- **Clients (`LeadsTable`)**: Filterable data table with 6 KPI cards, search, status filters, + Add Client modal, and embedded CSV/Excel import.
+- **Interactive CSV Import (`CsvImportModal`)**: Upload $\rightarrow$ Auto-mapping $\rightarrow$ In-place cell editor $\rightarrow$ Deduplication & workspace sync.
+- **Deals Pipeline (`PipelineView`)**: Drag-and-drop Kanban across 7 pipeline stages with top 4 summary KPI cards.
+- **Tasks & Reminders (`TasksView`)**: Task execution queue with due-today filters, manager reassignment, and completion audio.
+- **User Management (`UserManagementView`)**: Member roster and role assignments (`admin`, `manager`, `rep`).
+- **Collapsible Sidebar (`Sidebar`)**: Icon-only compact mode (`w-20`) with tooltips and brand logo icon.
+- **Audio Sound Engine (`soundService.js`)**: Web Audio API melodic chimes on actions, notifications, and task completions.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Development
+```bash
+npm run dev:web
+```
+Runs Vite development server on `http://localhost:5173`.

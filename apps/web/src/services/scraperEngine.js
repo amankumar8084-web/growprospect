@@ -1,5 +1,5 @@
 import { storage } from './storage';
-import { providerService } from './providerService';
+import { sessionManager } from './sessionManager';
 import { ContactEnricher } from '../../../../packages/scraper-business/src/contactEnricher.js';
 
 class ScraperEngine {
@@ -16,24 +16,6 @@ class ScraperEngine {
     const scrapers = storage.getScrapers();
     const scraper = scrapers.find((s) => s.id === scraperId);
     if (!scraper) throw new Error(`Scraper ${scraperId} not found`);
-
-    if (scraper.id === 'no-website-biz') {
-      try {
-        const provConfig = await providerService.getConfig();
-        const active = provConfig.activeProvider || 'geoapify';
-        const activeProv = provConfig.providers?.[active];
-        if (activeProv && activeProv.enabled === false) {
-          throw new Error(`The active location provider (${activeProv.name}) is disabled. Please enable it in Settings.`);
-        }
-        if ((active === 'geoapify' || active === 'google_places') && !activeProv?.hasKey) {
-          throw new Error(`API Key Required: Please configure your ${activeProv?.name || 'Provider'} Key in Settings.`);
-        }
-      } catch (err) {
-        if (err.message && (err.message.includes('API Key Required') || err.message.includes('disabled'))) {
-          throw err;
-        }
-      }
-    }
 
     const runId = this.generateRunId();
     const filters = { ...scraper.parameters, ...customParams };
@@ -232,13 +214,26 @@ class ScraperEngine {
         const enricher = new ContactEnricher();
         storage.appendRunLog(runId, { time: 'Just now', level: 'info', message: 'Querying configured active location provider...' });
 
-        const rawPlaces = await providerService.searchPlaces({
-          country,
-          state: filters.state || '',
-          city,
-          category: filters.category || 'Commercial & Local Services',
-          limit: count
-        });
+        let rawPlaces = [];
+        try {
+          const res = await sessionManager.authFetch('http://localhost:3001/api/providers/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              country,
+              state: filters.state || '',
+              city,
+              category: filters.category || 'Commercial & Local Services',
+              limit: count
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            rawPlaces = data.places || [];
+          }
+        } catch {
+          rawPlaces = [];
+        }
 
         if (!rawPlaces || rawPlaces.length === 0) {
           storage.appendRunLog(runId, { time: 'Just now', level: 'warn', message: 'Active provider returned 0 places for this criteria.' });
@@ -291,9 +286,18 @@ class ScraperEngine {
           leads.push({
             id: place.id || `lead-${Date.now()}-${Math.random()}`,
             name: place.name || 'Unknown Business',
+            company_name: place.name || 'Unknown Business',
             opportunityType: 'No Website',
             category: filters.category || 'Commercial Services',
+            city: place.city || city,
+            state: place.state || filters.state || '',
+            country: place.country || country || 'US',
             location: place.address || `${city}, ${country}`,
+            status: 'new',
+            pipeline_stage: 'New',
+            owner_id: null,
+            assigned_to: null,
+            assigned_to_name: 'Unassigned',
             website: null,
             phone: finalPhone,
             email: finalEmail,
@@ -343,9 +347,18 @@ class ScraperEngine {
         leads.push({
           id,
           name: `${prefix} ${type}`,
+          company_name: `${prefix} ${type}`,
           opportunityType: 'Outdated Website UI',
           category: filters.category || 'Healthcare & Services',
+          city,
+          state: filters.state || '',
+          country,
           location: `${city}, ${country}`,
+          status: 'new',
+          pipeline_stage: 'New',
+          owner_id: null,
+          assigned_to: null,
+          assigned_to_name: 'Unassigned',
           website: domain,
           phone: null,
           email: null,
@@ -371,9 +384,18 @@ class ScraperEngine {
         leads.push({
           id,
           name: company,
+          company_name: company,
           opportunityType: `Hiring ${filters.roleQuery || 'React Engineers'}`,
           category: 'Software & Technology',
+          city,
+          state: filters.state || '',
+          country,
           location: `${city}, ${country} (Remote)`,
+          status: 'new',
+          pipeline_stage: 'New',
+          owner_id: null,
+          assigned_to: null,
+          assigned_to_name: 'Unassigned',
           website: `https://${company.toLowerCase().replace(/\s+/g, '')}.io`,
           phone: null,
           email: null,
@@ -396,9 +418,18 @@ class ScraperEngine {
         leads.push({
           id,
           name: `${prefix} Brands Ltd`,
+          company_name: `${prefix} Brands Ltd`,
           opportunityType: title,
           category: 'Contract RFP',
+          city,
+          state: filters.state || '',
+          country,
           location: `${city}, ${country}`,
+          status: 'new',
+          pipeline_stage: 'New',
+          owner_id: null,
+          assigned_to: null,
+          assigned_to_name: 'Unassigned',
           website: `https://${prefix.toLowerCase()}-enterprises.com`,
           phone: null,
           email: null,

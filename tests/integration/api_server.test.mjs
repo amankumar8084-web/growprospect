@@ -1,20 +1,30 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
+import { getTestKeyPair, createTestToken } from '../../apps/api/src/middlewares/authMiddleware.js';
 
 describe('Node.js Backend API Server Integration', () => {
   let serverProcess;
   const API_URL = 'http://localhost:3099';
+  const keyPair = getTestKeyPair();
+  const adminToken = createTestToken({ role: 'admin', orgId: 'org_test' });
 
   before(async () => {
-    // Start API server on custom test port 3099
+    // Start API server on custom test port 3099 with test JWT public key
     serverProcess = spawn('node', ['apps/api/src/server.js'], {
-      env: { ...process.env, PORT: '3099' },
+      env: { ...process.env, PORT: '3099', NODE_ENV: 'test', CLERK_JWT_KEY: keyPair.publicKey },
       stdio: 'pipe'
     });
 
-    // Wait 1200ms for server to bind
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    // Wait for server to bind with health check polling
+    for (let i = 0; i < 50; i++) {
+      try {
+        const res = await fetch(`${API_URL}/api/health`);
+        if (res.ok) break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
   });
 
   after(() => {
@@ -23,47 +33,51 @@ describe('Node.js Backend API Server Integration', () => {
     }
   });
 
-  test('GET /api/health returns healthy status', async () => {
+  test('GET /api/health returns healthy status without authentication', async () => {
     const res = await fetch(`${API_URL}/api/health`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.strictEqual(data.status, 'healthy');
   });
 
-  test('POST /api/auth/login validates credentials from environment', async () => {
-    // 1. Success case
-    const successRes = await fetch(`${API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'admin', password: 'leadscrape2026' })
-    });
-    assert.strictEqual(successRes.status, 200);
-    const successData = await successRes.json();
-    assert.strictEqual(successData.success, true);
-    assert.ok(successData.token !== undefined);
-
-    // 2. Failure case
-    const failRes = await fetch(`${API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'admin', password: 'wrongpassword' })
-    });
-    assert.strictEqual(failRes.status, 401);
-    const failData = await failRes.json();
-    assert.strictEqual(failData.success, false);
+  test('Protected routes reject requests without token with 401 Unauthorized', async () => {
+    const res = await fetch(`${API_URL}/api/scrapers`);
+    assert.strictEqual(res.status, 401);
+    const data = await res.json();
+    assert.strictEqual(data.success, false);
+    assert.match(data.error, /Unauthorized/i);
   });
 
-  test('GET /api/scrapers lists all 4 scraper engines', async () => {
-    const res = await fetch(`${API_URL}/api/scrapers`);
+  test('Protected routes reject expired and tampered tokens with 401 Unauthorized', async () => {
+    const expiredToken = createTestToken({ expiresInSeconds: -10 });
+    const expiredRes = await fetch(`${API_URL}/api/scrapers`, {
+      headers: { Authorization: `Bearer ${expiredToken}` }
+    });
+    assert.strictEqual(expiredRes.status, 401);
+
+    const tamperedToken = createTestToken({ tamper: true });
+    const tamperedRes = await fetch(`${API_URL}/api/scrapers`, {
+      headers: { Authorization: `Bearer ${tamperedToken}` }
+    });
+    assert.strictEqual(tamperedRes.status, 401);
+  });
+
+  test('GET /api/scrapers succeeds with valid token', async () => {
+    const res = await fetch(`${API_URL}/api/scrapers`, {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.strictEqual(data.scrapers.length, 4);
   });
 
-  test('POST /api/runs dispatches a background scraper run', async () => {
+  test('POST /api/runs dispatches a background scraper run with valid token', async () => {
     const res = await fetch(`${API_URL}/api/runs`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      },
       body: JSON.stringify({
         scraperId: 'no-website-biz',
         filters: { city: 'Austin, TX', country: 'US', maxResults: 10 }
@@ -74,12 +88,16 @@ describe('Node.js Backend API Server Integration', () => {
     const data = await res.json();
     assert.ok(data.run.id.startsWith('RUN-'));
     assert.strictEqual(data.run.status, 'running');
+    assert.strictEqual(data.run.org_id, 'org_test');
   });
 
-  test('POST /api/enrich performs Crawlee domain audit', async () => {
+  test('POST /api/enrich performs Crawlee domain audit with valid token', async () => {
     const res = await fetch(`${API_URL}/api/enrich`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      },
       body: JSON.stringify({ url: 'http://chicago-apex-dental.com' })
     });
 

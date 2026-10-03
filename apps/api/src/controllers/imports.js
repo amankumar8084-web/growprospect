@@ -133,6 +133,8 @@ const validateImport = (req, res) => {
 const commitImport = async (req, res) => {
   try {
     const { validRecords, source, filename } = req.body;
+    const orgId = req.auth?.orgId || req.headers['x-org-id'] || 'org_default';
+
     if (!Array.isArray(validRecords) || !source) {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
@@ -148,8 +150,8 @@ const commitImport = async (req, res) => {
 
       // Create import batch
       const batchRes = await client.query(
-        'INSERT INTO import_batches (source, filename, total_rows) VALUES ($1, $2, $3) RETURNING id',
-        [source, filename || 'unknown', validRecords.length]
+        'INSERT INTO import_batches (org_id, source, filename, total_rows) VALUES ($1, $2, $3, $4) RETURNING id',
+        [orgId, source, filename || 'unknown', validRecords.length]
       );
       const batchId = batchRes.rows[0].id;
 
@@ -157,8 +159,8 @@ const commitImport = async (req, res) => {
         // Deduplication Check
         // Phase 7 criteria: source_record_id OR website OR phone OR email OR (name AND (city OR state OR country))
         const conditions = [];
-        const values = [];
-        let pIndex = 1;
+        const values = [orgId];
+        let pIndex = 2;
 
         if (record.source_record_id) { conditions.push(`source_record_id = $${pIndex++}`); values.push(record.source_record_id); }
         if (record.website) { conditions.push(`website = $${pIndex++}`); values.push(record.website); }
@@ -172,7 +174,10 @@ const commitImport = async (req, res) => {
 
         let isDuplicate = false;
         if (conditions.length > 0) {
-          const dupCheck = await client.query(`SELECT id FROM leads WHERE ${conditions.join(' OR ')} LIMIT 1`, values);
+          const dupCheck = await client.query(
+            `SELECT id FROM leads WHERE (org_id = $1 OR org_id = 'org_default') AND (${conditions.join(' OR ')}) LIMIT 1`,
+            values
+          );
           if (dupCheck.rows.length > 0) {
             isDuplicate = true;
           }
@@ -184,10 +189,11 @@ const commitImport = async (req, res) => {
           // Insert new lead
           await client.query(
             `INSERT INTO leads (
-              source, source_record_id, name, company_name, email, phone, website, linkedin_url, address, import_batch_id,
-              lead_type, job_title, maps_url, country, state, city, website_status, notes
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+              org_id, source, source_record_id, name, company_name, email, phone, website, linkedin_url, address, import_batch_id,
+              lead_type, job_title, maps_url, country, state, city, website_status, notes, pipeline_stage
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
             [
+              orgId,
               source,
               record.source_record_id || null,
               record.name || null,
@@ -205,7 +211,8 @@ const commitImport = async (req, res) => {
               record.state || null,
               record.city || null,
               record.website_status || null,
-              record.notes || null
+              record.notes || null,
+              'New'
             ]
           );
           insertedCount++;

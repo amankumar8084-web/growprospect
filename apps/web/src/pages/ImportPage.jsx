@@ -1,240 +1,181 @@
-import React, { useState, useRef } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import React, { useState, useEffect, useRef } from 'react';
+import readXlsxFile from 'read-excel-file/browser';
 import { storage } from '../services/storage';
+import { crmService } from '../services/crmService';
+import { sessionManager } from '../services/sessionManager';
+import { PIPELINE_STAGES, STAGE_CONFIG } from '../constants/crm';
 import { 
-  MapPin, 
-  Briefcase, 
-  Globe, 
+  UploadCloud, 
   FileSpreadsheet, 
   PenSquare, 
   ArrowRight, 
-  User, 
+  ArrowLeft,
   Check, 
-  UploadCloud, 
   AlertCircle, 
-  FileText, 
+  AlertTriangle,
   Download, 
-  Sparkles, 
-  RefreshCw,
-  Plus,
+  CheckCircle2, 
+  XCircle, 
+  Users, 
+  Tag, 
+  MapPin, 
+  Globe, 
+  Phone, 
+  Mail, 
+  FileText,
+  Building2,
   Trash2,
-  CheckCircle2,
-  XCircle,
-  HelpCircle
+  X,
+  ExternalLink,
+  ChevronRight
 } from 'lucide-react';
 
-/* ── Six Core Sources Config ── */
-const sourceCards = [
-  {
-    id: 'Google Maps',
-    title: 'Google Maps',
-    description: 'Business listings, contact & location data.',
-    leadType: 'Business Leads',
-    isPopular: true,
-    accentColor: '#EA4B0B',
-    icon: (
-      <div className="w-12 h-12 rounded-xl bg-[#FFF5F0] border border-[#FFE2D5] flex items-center justify-center text-[#EA4B0B] shadow-2xs">
-        <MapPin className="w-6 h-6 stroke-[2]" />
-      </div>
-    ),
-  },
-  {
-    id: 'LinkedIn',
-    title: 'LinkedIn',
-    description: 'Professional profiles, company info & contacts.',
-    leadType: 'Person / Business Leads',
-    icon: (
-      <div className="w-12 h-12 rounded-xl bg-[#111111] flex items-center justify-center text-white shadow-2xs">
-        <span className="font-sans font-extrabold text-base tracking-tighter">in</span>
-      </div>
-    ),
-  },
-  {
-    id: 'LinkedIn Jobs',
-    title: 'LinkedIn Jobs',
-    description: 'Job postings, company details & skills.',
-    leadType: 'Job Leads',
-    icon: (
-      <div className="w-12 h-12 rounded-xl bg-[#F5F5F5] border border-[#E7E7E7] flex items-center justify-center text-[#111111] shadow-2xs">
-        <Briefcase className="w-5 h-5 stroke-[2]" />
-      </div>
-    ),
-  },
-  {
-    id: 'Website',
-    title: 'Website Research',
-    description: 'Find business info from websites & contact pages.',
-    leadType: 'Business Leads',
-    icon: (
-      <div className="w-12 h-12 rounded-xl bg-[#F5F5F5] border border-[#E7E7E7] flex items-center justify-center text-[#111111] shadow-2xs">
-        <Globe className="w-5 h-5 stroke-[2]" />
-      </div>
-    ),
-  },
-  {
-    id: 'CSV / Excel',
-    title: 'CSV / Excel',
-    description: 'Upload your own data file.',
-    leadType: 'Business / Person / Job Leads',
-    icon: (
-      <div className="w-12 h-12 rounded-xl bg-[#F5F5F5] border border-[#E7E7E7] flex items-center justify-center text-[#111111] shadow-2xs">
-        <FileSpreadsheet className="w-5 h-5 stroke-[2]" />
-      </div>
-    ),
-  },
-  {
-    id: 'Manual',
-    title: 'Manual Entry',
-    description: 'Add leads one by one.',
-    leadType: 'Business / Person / Job Leads',
-    icon: (
-      <div className="w-12 h-12 rounded-xl bg-[#F5F5F5] border border-[#E7E7E7] flex items-center justify-center text-[#111111] shadow-2xs">
-        <PenSquare className="w-5 h-5 stroke-[2]" />
-      </div>
-    ),
-  },
+import { normalizeDomain, normalizePhone, normalizeEmail } from '../services/dedupService';
+
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+
+// Auto-detect standard fields
+const SYSTEM_FIELDS = [
+  { value: '', label: '— Ignore this column' },
+  { value: 'company_name', label: 'Company' },
+  { value: 'name', label: 'Contact' },
+  { value: 'email', label: 'Email' },
+  { value: 'phone', label: 'Phone' },
+  { value: 'website', label: 'Website' },
+  { value: 'city', label: 'City' },
+  { value: 'state', label: 'State' },
+  { value: 'country', label: 'Country' },
+  { value: 'notes', label: 'Notes' },
+  { value: 'deal_value', label: 'Deal Value' },
+  { value: 'job_title', label: 'Job Title' },
 ];
 
-export default function ImportPage() {
-  const { getToken } = useAuth();
-  const [step, setStep] = useState(1);
-  const [source, setSource] = useState('Google Maps');
-  const [file, setFile] = useState(null);
-  const [previewData, setPreviewData] = useState(null);
-  const [mapping, setMapping] = useState({});
-  const [validationResult, setValidationResult] = useState(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const fileInputRef = useRef(null);
+const AUTO_MAP_RULES = [
+  { field: 'company_name', patterns: ['company', 'business', 'org', 'firm', 'agency', 'company_name', 'business_name', 'title'] },
+  { field: 'name', patterns: ['contact', 'name', 'person', 'fullname', 'first_name', 'contact_name', 'owner'] },
+  { field: 'email', patterns: ['email', 'mail', 'email_address', 'e-mail'] },
+  { field: 'phone', patterns: ['phone', 'tel', 'mobile', 'telephone', 'cell', 'phone_number'] },
+  { field: 'website', patterns: ['website', 'url', 'domain', 'web', 'site', 'link'] },
+  { field: 'city', patterns: ['city', 'town', 'municipality'] },
+  { field: 'state', patterns: ['state', 'province', 'region'] },
+  { field: 'country', patterns: ['country', 'nation'] },
+  { field: 'notes', patterns: ['note', 'notes', 'comment', 'comments', 'description', 'remarks'] },
+  { field: 'deal_value', patterns: ['deal', 'value', 'amount', 'budget', 'price', 'revenue'] },
+  { field: 'job_title', patterns: ['job', 'job_title', 'headline', 'position', 'role'] }
+];
 
-  // Manual entry state
+export default function ImportPage({ onViewLeads }) {
+  const [mode, setMode] = useState('upload'); // 'upload' | 'manual'
+  const [currentStep, setCurrentStep] = useState(1); // 1: Upload, 2: Map, 3: Review, 4: Finish
+
+  // Step 1: Upload & Batch Config
+  const [file, setFile] = useState(null);
+  const [fileError, setFileError] = useState('');
+  const [defaultStatus, setDefaultStatus] = useState('new');
+  const [ownerStrategy, setOwnerStrategy] = useState('unassigned'); // 'unassigned', 'round-robin', 'location-rule', or member user_id
+  const [batchTag, setBatchTag] = useState('');
+  const [sourceLabel, setSourceLabel] = useState(`Batch_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
+  const [teamMembers, setTeamMembers] = useState([]);
+
+  // Parsed File Data
+  const [headers, setHeaders] = useState([]);
+  const [rawRows, setRawRows] = useState([]);
+  const [mapping, setMapping] = useState({});
+
+  // Step 3: Review & Deduplication
+  const [duplicateHandling, setDuplicateHandling] = useState('skip'); // 'skip', 'update', 'import-anyway'
+  const [processedRecords, setProcessedRecords] = useState([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Summary State after commit
+  const [summary, setSummary] = useState(null);
+
+  // Manual Lead Entry Form State
   const [manualForm, setManualForm] = useState({
     company_name: '',
     name: '',
-    job_title: '',
     email: '',
     phone: '',
     website: '',
-    linkedin_url: '',
-    maps_url: '',
-    country: 'US',
     city: '',
-    website_status: 'Unknown',
-    lead_type: 'business',
+    state: '',
+    country: 'US',
+    status: 'new',
+    owner_id: '',
+    tags: '',
     notes: '',
+    deal_value: ''
   });
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [manualMessage, setManualMessage] = useState(null);
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+  const fileInputRef = useRef(null);
 
-  const stepLabels = ['Source', 'Upload', 'Column Mapping', 'Validation', 'Review & Import'];
+  // Load team members on mount
+  useEffect(() => {
+    crmService.getTeamMembers().then(setTeamMembers).catch(() => {});
+  }, []);
 
-  const systemFields = [
-    { value: '', label: '— Skip this column' },
-    { value: 'name', label: 'Name' },
-    { value: 'company_name', label: 'Company Name' },
-    { value: 'job_title', label: 'Job Title' },
-    { value: 'email', label: 'Email' },
-    { value: 'phone', label: 'Phone' },
-    { value: 'website', label: 'Website' },
-    { value: 'linkedin_url', label: 'LinkedIn URL' },
-    { value: 'maps_url', label: 'Maps URL' },
-    { value: 'address', label: 'Address' },
-    { value: 'city', label: 'City' },
-    { value: 'state', label: 'State' },
-    { value: 'country', label: 'Country' },
-    { value: 'lead_type', label: 'Lead Type' },
-    { value: 'source_record_id', label: 'Source Record ID' },
-    { value: 'website_status', label: 'Website Status' },
-    { value: 'notes', label: 'Notes' },
-  ];
+  // Handle file drop / select
+  const handleFile = async (selectedFile) => {
+    setFileError('');
+    if (!selectedFile) return;
 
-  const handleSourceSelect = (srcId) => {
-    setSource(srcId);
-    setStep(2);
-  };
-
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
+    if (selectedFile.size > MAX_FILE_SIZE_BYTES) {
+      setFileError('File exceeds the 10MB upload limit. Please upload a smaller file.');
+      return;
     }
-  };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setFile(e.dataTransfer.files[0]);
+    const name = selectedFile.name.toLowerCase();
+    if (!name.endsWith('.csv') && !name.endsWith('.xlsx') && !name.endsWith('.xls')) {
+      setFileError('Unsupported file type. Please upload a CSV, XLSX, or XLS spreadsheet.');
+      return;
     }
+
+    setFile(selectedFile);
   };
 
-  // Generate demo CSV for instant testing
-  const handleLoadSampleData = () => {
-    const sampleCsvContent = `name,company_name,email,phone,website,city,country,lead_type\n` +
-      `Sarah Jenkins,Apex Cloud Inc,sarah@apexcloud.io,+1 512 884 1029,https://apexcloud.io,Austin,US,person\n` +
-      `Marcus Vance,Vanguard Logistics,info@vanguardops.com,+1 312 990 4410,https://vanguardops.com,Chicago,US,business\n` +
-      `Elena Rostova,Summit Peak Labs,elena@summitpeak.co,+1 415 670 9920,https://summitpeak.co,San Francisco,US,person\n` +
-      `David Chen,Urban Edge Design,contact@urbanedgedesign.com,,https://urbanedge.design,Seattle,US,business\n` +
-      `Tech Hire Lead,Silverline Data,hr@silverlinedata.com,+1 206 555 0192,,Boston,US,job`;
+  // Parse file and proceed to Step 2
+  const handleProceedToMapping = async () => {
+    if (!file) {
+      setFileError('Please select a file to upload.');
+      return;
+    }
 
-    const blob = new Blob([sampleCsvContent], { type: 'text/csv' });
-    const sampleFile = new File([blob], `${source.toLowerCase().replace(/[^a-z0-9]/g, '_')}_leads_sample.csv`, { type: 'text/csv' });
-    setFile(sampleFile);
-  };
-
-  const handleUpload = async () => {
-    if (!file) return;
     setIsProcessing(true);
+    setFileError('');
+
     try {
-      let csvText = '';
-      if (file.name.endsWith('.csv') || file.type === 'text/csv' || file.type.includes('text') || !file.name.includes('.')) {
-        csvText = await file.text();
-      }
+      let parsedHeaders = [];
+      let parsedRows = [];
 
-      let data = null;
-      let token = '';
-      try {
-        token = await getToken();
-      } catch {
-        // Clerk token fallback
-      }
+      const fileName = file.name.toLowerCase();
 
-      // 1. Try sending to backend upload endpoint
-      try {
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        const res = await fetch(`${API_URL}/api/import/upload`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            filename: file.name,
-            source,
-            csvText
-          }),
+      if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+        // Parse with read-excel-file
+        const rows = await readXlsxFile(file);
+        if (!rows || rows.length < 2) {
+          throw new Error('Spreadsheet must contain a header row and at least one data row.');
+        }
+        parsedHeaders = rows[0].map(h => String(h || '').trim());
+        parsedRows = rows.slice(1).map(r => {
+          const obj = {};
+          parsedHeaders.forEach((h, idx) => {
+            obj[h] = r[idx] !== null && r[idx] !== undefined ? String(r[idx]).trim() : '';
+          });
+          return obj;
         });
-
-        if (res.ok) {
-          data = await res.json();
-        }
-      } catch (networkErr) {
-        console.warn('Backend upload network error, using browser parser:', networkErr);
-      }
-
-      // 2. Client-side CSV parser fallback if backend unavailable
-      if (!data || !data.headers || data.headers.length === 0) {
-        if (!csvText) {
-          csvText = await file.text();
-        }
-        
-        // Custom robust CSV parser
+      } else {
+        // Parse CSV
+        const text = await file.text();
         const lines = [];
         let row = [];
         let inQuotes = false;
         let currentField = '';
 
-        for (let i = 0; i < csvText.length; i++) {
-          const char = csvText[i];
-          const nextChar = csvText[i + 1];
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i];
+          const nextChar = text[i + 1];
 
           if (char === '"') {
             if (inQuotes && nextChar === '"') {
@@ -261,848 +202,1125 @@ export default function ImportPage() {
           if (row.some(f => f.length > 0)) lines.push(row);
         }
 
-        if (lines.length === 0) {
-          throw new Error('Unable to extract records from this file. Please verify CSV format.');
+        if (lines.length < 2) {
+          throw new Error('CSV file must contain a header row and at least one record.');
         }
 
-        const headers = lines[0].map(h => h.replace(/^["']|["']$/g, '').trim());
-        const rows = [];
-        for (let r = 1; r < lines.length; r++) {
+        parsedHeaders = lines[0].map(h => h.replace(/^["']|["']$/g, '').trim());
+        parsedRows = lines.slice(1).map(r => {
           const obj = {};
-          headers.forEach((h, idx) => {
-            obj[h] = (lines[r][idx] || '').replace(/^["']|["']$/g, '').trim();
+          parsedHeaders.forEach((h, idx) => {
+            obj[h] = (r[idx] || '').replace(/^["']|["']$/g, '').trim();
           });
-          rows.push(obj);
-        }
-
-        // Auto-mapping rules
-        const rules = [
-          { field: 'company_name', patterns: ['company', 'company_name', 'business', 'business_name', 'title', 'organization', 'agency'] },
-          { field: 'name', patterns: ['name', 'contact', 'contact_name', 'fullname', 'person', 'owner'] },
-          { field: 'job_title', patterns: ['title', 'job_title', 'headline', 'position', 'role'] },
-          { field: 'category', patterns: ['category', 'categories', 'industry', 'type', 'tag', 'tags'] },
-          { field: 'email', patterns: ['email', 'email_address', 'mail'] },
-          { field: 'phone', patterns: ['phone', 'phone_number', 'tel', 'mobile'] },
-          { field: 'website', patterns: ['website', 'url', 'site', 'web', 'domain', 'link'] },
-          { field: 'address', patterns: ['address', 'formatted_address', 'street', 'location'] },
-          { field: 'city', patterns: ['city', 'town'] },
-          { field: 'state', patterns: ['state', 'province'] },
-          { field: 'country', patterns: ['country', 'nation'] },
-          { field: 'maps_url', patterns: ['maps_url', 'google_maps_url', 'gmaps'] },
-          { field: 'linkedin_url', patterns: ['linkedin', 'linkedin_url'] }
-        ];
-
-        const autoMapping = {};
-        headers.forEach(h => {
-          const clean = h.toLowerCase().replace(/[^a-z0-9]/g, '');
-          let matched = '';
-          for (const rule of rules) {
-            if (rule.patterns.some(p => clean.includes(p.replace(/[^a-z0-9]/g, '')))) {
-              matched = rule.field;
-              break;
-            }
-          }
-          autoMapping[h] = matched;
+          return obj;
         });
-
-        data = {
-          importSessionId: `sess_${Date.now()}`,
-          filename: file.name,
-          totalRows: rows.length,
-          headers,
-          preview: rows.slice(0, 5),
-          autoMapping,
-          _localRows: rows
-        };
       }
 
-      setPreviewData(data);
-      setMapping(data.autoMapping || {});
-      setStep(3);
+      setHeaders(parsedHeaders);
+      setRawRows(parsedRows);
+
+      // Auto-detect columns
+      const autoMap = {};
+      parsedHeaders.forEach(header => {
+        const clean = header.toLowerCase().replace(/[^a-z0-9]/g, '');
+        let matched = '';
+        for (const rule of AUTO_MAP_RULES) {
+          if (rule.patterns.some(p => clean.includes(p.replace(/[^a-z0-9]/g, '')))) {
+            matched = rule.field;
+            break;
+          }
+        }
+        autoMap[header] = matched;
+      });
+      setMapping(autoMap);
+
+      setCurrentStep(2);
     } catch (err) {
-      alert(`Error uploading file: ${err.message}`);
+      setFileError(err.message || 'Failed to parse file.');
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleManualSubmit = async (e) => {
-    e.preventDefault();
-    if (!manualForm.company_name && !manualForm.name) {
-      alert('Please enter at least a Company Name or Contact Name');
+  // Process rows against existing database leads for Step 3
+  const handleProceedToReview = () => {
+    setIsProcessing(true);
+
+    try {
+      const existingLeads = storage.getLeads();
+      const existingEmails = new Set();
+      const existingPhones = new Set();
+      const existingDomains = new Set();
+      const existingLeadMap = new Map(); // key -> lead
+
+      existingLeads.forEach(lead => {
+        if (lead.email) {
+          const e = normalizeEmail(lead.email);
+          existingEmails.add(e);
+          existingLeadMap.set(`email:${e}`, lead);
+        }
+        if (lead.phone) {
+          const p = normalizePhone(lead.phone);
+          if (p.length >= 7) {
+            existingPhones.add(p);
+            existingLeadMap.set(`phone:${p}`, lead);
+          }
+        }
+        if (lead.website) {
+          const d = normalizeDomain(lead.website);
+          if (d) {
+            existingDomains.add(d);
+            existingLeadMap.set(`domain:${d}`, lead);
+          }
+        }
+      });
+
+      // Map rows
+      const processed = rawRows.map((rawRow, idx) => {
+        const lead = {
+          rawRow,
+          rowIndex: idx + 1,
+          status: defaultStatus,
+          source: sourceLabel || 'CSV Import',
+          tags: batchTag ? [batchTag.trim()] : []
+        };
+
+        // Apply mapped fields
+        Object.entries(mapping).forEach(([fileCol, systemField]) => {
+          if (systemField && rawRow[fileCol] !== undefined) {
+            lead[systemField] = rawRow[fileCol];
+          }
+        });
+
+        // Validation check
+        const hasCompany = Boolean(lead.company_name && lead.company_name.trim());
+        const hasContact = Boolean(lead.name && lead.name.trim());
+        const hasEmail = Boolean(lead.email && lead.email.trim());
+        const hasPhone = Boolean(lead.phone && lead.phone.trim());
+
+        if (!hasCompany && !hasContact && !hasEmail && !hasPhone) {
+          return {
+            ...lead,
+            validationStatus: 'invalid',
+            errorReason: 'Row has no company name, contact, email or phone.'
+          };
+        }
+
+        // Deduplication check
+        let isDuplicate = false;
+        let matchedExistingLead = null;
+        let dupReason = '';
+
+        if (lead.email) {
+          const e = normalizeEmail(lead.email);
+          if (existingEmails.has(e)) {
+            isDuplicate = true;
+            matchedExistingLead = existingLeadMap.get(`email:${e}`);
+            dupReason = `Matching email: ${e}`;
+          }
+        }
+
+        if (!isDuplicate && lead.phone) {
+          const p = normalizePhone(lead.phone);
+          if (p.length >= 7 && existingPhones.has(p)) {
+            isDuplicate = true;
+            matchedExistingLead = existingLeadMap.get(`phone:${p}`);
+            dupReason = `Matching phone: ${lead.phone}`;
+          }
+        }
+
+        if (!isDuplicate && lead.website) {
+          const d = normalizeDomain(lead.website);
+          if (d && existingDomains.has(d)) {
+            isDuplicate = true;
+            matchedExistingLead = existingLeadMap.get(`domain:${d}`);
+            dupReason = `Matching domain: ${d}`;
+          }
+        }
+
+        if (isDuplicate) {
+          return {
+            ...lead,
+            validationStatus: 'duplicate',
+            dupReason,
+            matchedExistingLead
+          };
+        }
+
+        return {
+          ...lead,
+          validationStatus: 'valid'
+        };
+      });
+
+      setProcessedRecords(processed);
+      setCurrentStep(3);
+    } catch (err) {
+      alert('Error analyzing rows: ' + err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Download Error / Invalid File
+  const handleDownloadErrorFile = () => {
+    const errorRows = processedRecords.filter(r => r.validationStatus === 'invalid' || r.validationStatus === 'duplicate');
+    if (errorRows.length === 0) {
+      alert('No error or duplicate rows found.');
       return;
     }
 
+    const exportHeaders = ['Row Index', 'Error Status', 'Reason', ...headers];
+    const csvLines = [exportHeaders.join(',')];
+
+    errorRows.forEach(r => {
+      const line = [
+        r.rowIndex,
+        r.validationStatus.toUpperCase(),
+        `"${(r.errorReason || r.dupReason || '').replace(/"/g, '""')}"`,
+        ...headers.map(h => `"${(r.rawRow[h] || '').replace(/"/g, '""')}"`)
+      ];
+      csvLines.push(line.join(','));
+    });
+
+    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `import_errors_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Commit Import
+  const handleCommitImport = async () => {
     setIsProcessing(true);
+
     try {
-      const name = manualForm.company_name || manualForm.name;
+      const existingLeads = storage.getLeads();
+      const currentOrgId = sessionManager.getOrgId();
+      const reps = teamMembers.filter(m => m.role === 'rep' || m.role === 'manager');
+
+      let importedCount = 0;
+      let updatedCount = 0;
+      let skippedCount = 0;
+
+      const leadsToUpsert = [];
+
+      processedRecords.forEach((record, index) => {
+        // Handle based on duplicate choice
+        if (record.validationStatus === 'invalid') {
+          skippedCount++;
+          return;
+        }
+
+        if (record.validationStatus === 'duplicate') {
+          if (duplicateHandling === 'skip') {
+            skippedCount++;
+            return;
+          }
+          if (duplicateHandling === 'update' && record.matchedExistingLead) {
+            // Update existing lead
+            const updated = {
+              ...record.matchedExistingLead,
+              company_name: record.company_name || record.matchedExistingLead.company_name,
+              name: record.name || record.matchedExistingLead.name,
+              email: record.email || record.matchedExistingLead.email,
+              phone: record.phone || record.matchedExistingLead.phone,
+              website: record.website || record.matchedExistingLead.website,
+              city: record.city || record.matchedExistingLead.city,
+              state: record.state || record.matchedExistingLead.state,
+              country: record.country || record.matchedExistingLead.country,
+              deal_value: record.deal_value || record.matchedExistingLead.deal_value,
+              notes: record.notes ? `${record.matchedExistingLead.notes || ''}\n${record.notes}`.trim() : record.matchedExistingLead.notes,
+              last_activity_at: new Date().toISOString()
+            };
+            if (batchTag && (!updated.tags || !updated.tags.includes(batchTag.trim()))) {
+              updated.tags = [...(updated.tags || []), batchTag.trim()];
+            }
+            storage.updateLead(updated);
+            updatedCount++;
+            return;
+          }
+          // 'import-anyway' continues below
+        }
+
+        // Assign Owner based on strategy
+        let assignedOwnerId = null;
+        let assignedOwnerName = 'Unassigned';
+
+        if (ownerStrategy === 'round-robin' && reps.length > 0) {
+          const assignedRep = reps[index % reps.length];
+          assignedOwnerId = assignedRep.user_id;
+          assignedOwnerName = assignedRep.name;
+        } else if (ownerStrategy === 'location-rule') {
+          // Match territory by state/country if matched
+          const repMatch = reps.find(r => r.name.toLowerCase().includes((record.city || '').toLowerCase()));
+          if (repMatch) {
+            assignedOwnerId = repMatch.user_id;
+            assignedOwnerName = repMatch.name;
+          } else if (reps.length > 0) {
+            assignedOwnerId = reps[index % reps.length].user_id;
+            assignedOwnerName = reps[index % reps.length].name;
+          }
+        } else if (ownerStrategy !== 'unassigned') {
+          const selectedRep = teamMembers.find(m => m.user_id === ownerStrategy);
+          if (selectedRep) {
+            assignedOwnerId = selectedRep.user_id;
+            assignedOwnerName = selectedRep.name;
+          }
+        }
+
+        const newLead = {
+          id: `lead_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+          org_id: currentOrgId,
+          company_name: record.company_name || record.name || 'Unnamed Company',
+          name: record.name || record.company_name || 'Contact',
+          email: record.email || null,
+          phone: record.phone || null,
+          website: record.website || null,
+          city: record.city || null,
+          state: record.state || null,
+          country: record.country || 'US',
+          location: record.city ? `${record.city}, ${record.country || 'US'}` : (record.country || 'United States'),
+          deal_value: record.deal_value ? Number(record.deal_value) : null,
+          status: record.status || 'new',
+          pipeline_stage: (record.status || 'new').charAt(0).toUpperCase() + (record.status || 'new').slice(1),
+          owner_id: assignedOwnerId,
+          assigned_to: assignedOwnerId,
+          assigned_to_name: assignedOwnerName,
+          tags: record.tags || [],
+          notes: record.notes || '',
+          source: record.source || sourceLabel || 'CSV Import',
+          batch_id: sourceLabel,
+          created_at: new Date().toISOString(),
+          status_changed_at: new Date().toISOString(),
+          last_activity_at: new Date().toISOString()
+        };
+
+        storage.addLead(newLead);
+        leadsToUpsert.push(newLead);
+        importedCount++;
+      });
+
+      // Best effort backend sync
+      try {
+        await sessionManager.authFetch('http://localhost:3001/api/analytics/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leads: leadsToUpsert })
+        });
+      } catch {
+        // sync warning handled
+      }
+
+      setSummary({
+        total: processedRecords.length,
+        importedCount,
+        updatedCount,
+        skippedCount,
+        batchId: sourceLabel
+      });
+      setCurrentStep(4);
+    } catch (err) {
+      alert('Error committing import: ' + err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Submit Manual Single Lead
+  const handleManualSubmit = async (e) => {
+    e.preventDefault();
+    setManualSubmitting(true);
+    setManualMessage(null);
+
+    try {
+      const currentOrgId = sessionManager.getOrgId();
+      const existingLeads = storage.getLeads();
+
+      // Check duplicates
+      const dup = existingLeads.find(l => {
+        if (manualForm.email && normalizeEmail(l.email) === normalizeEmail(manualForm.email)) return true;
+        if (manualForm.phone && normalizePhone(l.phone) === normalizePhone(manualForm.phone) && normalizePhone(manualForm.phone).length >= 7) return true;
+        return false;
+      });
+
+      if (dup) {
+        if (!confirm(`Warning: A lead matching this email/phone already exists ("${dup.company_name || dup.name}"). Create anyway?`)) {
+          setManualSubmitting(false);
+          return;
+        }
+      }
+
+      const assignedRep = teamMembers.find(m => m.user_id === manualForm.owner_id);
+
       const newLead = {
-        id: `lead-manual-${Date.now()}`,
-        name,
-        company_name: name,
-        job_title: manualForm.job_title || null,
-        email: manualForm.email || null,
-        phone: manualForm.phone || null,
-        website: manualForm.website || null,
-        location: manualForm.city ? `${manualForm.city}, ${manualForm.country || 'US'}` : (manualForm.address || 'US'),
-        city: manualForm.city || '',
-        country: manualForm.country || 'US',
+        id: `lead_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+        org_id: currentOrgId,
+        company_name: manualForm.company_name.trim(),
+        name: manualForm.name.trim(),
+        email: manualForm.email.trim() || null,
+        phone: manualForm.phone.trim() || null,
+        website: manualForm.website.trim() || null,
+        city: manualForm.city.trim() || null,
+        state: manualForm.state.trim() || null,
+        country: manualForm.country.trim() || 'US',
+        location: manualForm.city ? `${manualForm.city}, ${manualForm.country || 'US'}` : manualForm.country,
+        deal_value: manualForm.deal_value ? Number(manualForm.deal_value) : null,
+        status: manualForm.status,
+        pipeline_stage: manualForm.status.charAt(0).toUpperCase() + manualForm.status.slice(1),
+        owner_id: manualForm.owner_id || null,
+        assigned_to: manualForm.owner_id || null,
+        assigned_to_name: assignedRep ? assignedRep.name : 'Unassigned',
+        tags: manualForm.tags ? manualForm.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+        notes: manualForm.notes.trim() || '',
         source: 'Manual Entry',
-        scraperId: 'no-website-biz',
-        scraperName: 'Manual Entry',
-        opportunityType: manualForm.website ? 'Website Audit' : 'No Website',
-        website_status: manualForm.website ? 'Website Exists' : 'No Website',
-        emailVerificationStatus: manualForm.email ? 'verified' : 'not_applicable',
-        scrapedAt: new Date().toISOString(),
-        lead_status: 'new'
+        created_at: new Date().toISOString(),
+        status_changed_at: new Date().toISOString(),
+        last_activity_at: new Date().toISOString()
       };
 
       storage.addLead(newLead);
-
       try {
-        const token = await getToken();
-        await fetch(`${API_URL}/api/leads`, {
+        await sessionManager.authFetch('http://localhost:3001/api/analytics/sync', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify(newLead),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leads: [newLead] })
         });
       } catch {}
 
-      setValidationResult({
-        summary: { total: 1, valid: 1, invalid: 0 },
-        commitResult: { inserted: 1, duplicates: 0 },
+      setManualMessage({ type: 'success', text: `Lead "${newLead.company_name}" created successfully!` });
+      setManualForm({
+        company_name: '',
+        name: '',
+        email: '',
+        phone: '',
+        website: '',
+        city: '',
+        state: '',
+        country: 'US',
+        status: 'new',
+        owner_id: '',
+        tags: '',
+        notes: '',
+        deal_value: ''
       });
-      setStep(5);
     } catch (err) {
-      alert(`Manual entry error: ${err.message}`);
+      setManualMessage({ type: 'error', text: err.message });
     } finally {
-      setIsProcessing(false);
+      setManualSubmitting(false);
     }
   };
 
-  const handleMappingChange = (header, systemField) => {
-    setMapping((prev) => ({
-      ...prev,
-      [header]: systemField,
-    }));
-  };
-
-  const handleValidate = async () => {
-    if (!previewData || !previewData.importSessionId) return;
-    setIsProcessing(true);
-    try {
-      let data = null;
-      let token = '';
-      try { token = await getToken(); } catch {}
-
-      try {
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        const res = await fetch(`${API_URL}/api/import/validate`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            importSessionId: previewData.importSessionId,
-            mapping,
-          }),
-        });
-
-        if (res.ok) {
-          data = await res.json();
-        }
-      } catch (err) {
-        console.warn('Backend validation warning, using local validator:', err);
-      }
-
-      if (!data || !data.summary) {
-        const rows = previewData._localRows || previewData.preview || [];
-        const validRecords = [];
-        const invalidRows = [];
-
-        rows.forEach((row, idx) => {
-          const rec = { source };
-          for (const [h, sys] of Object.entries(mapping)) {
-            if (sys && row[h] !== undefined) rec[sys] = row[h];
-          }
-          const comp = rec.company_name || rec.name;
-          if (!comp || !String(comp).trim()) {
-            invalidRows.push({ row: idx + 1, errors: 'Missing company name or contact name' });
-          } else {
-            validRecords.push(rec);
-          }
-        });
-
-        data = {
-          summary: {
-            total: rows.length,
-            valid: validRecords.length,
-            invalid: invalidRows.length
-          },
-          invalidRows,
-          _localValidRecords: validRecords
-        };
-      }
-
-      setValidationResult(data);
-      setStep(4);
-    } catch (err) {
-      alert(`Validation error: ${err.message}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleCommit = async () => {
-    if (!previewData) return;
-    setIsProcessing(true);
-    try {
-      let data = null;
-      let token = '';
-      try { token = await getToken(); } catch {}
-
-      try {
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        const res = await fetch(`${API_URL}/api/import/commit`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            importSessionId: previewData.importSessionId,
-          }),
-        });
-
-        if (res.ok) {
-          data = await res.json();
-        }
-      } catch (err) {
-        console.warn('Backend commit warning, committing locally:', err);
-      }
-
-      // If backend returned leads, save to storage
-      if (data && data.leads && Array.isArray(data.leads) && data.leads.length > 0) {
-        storage.addLeadsBatch(data.leads);
-      } else {
-        // Fallback local commit to storage
-        const validRecs = validationResult?._localValidRecords || [];
-        const newLeads = validRecs.map((rec, i) => ({
-          id: `lead-import-${Date.now()}-${i}`,
-          name: rec.company_name || rec.name || 'Imported Lead',
-          company_name: rec.company_name || rec.name,
-          category: rec.category || rec.industry || 'Commercial Services',
-          location: rec.address || rec.city || 'US',
-          website: rec.website || null,
-          phone: rec.phone || null,
-          email: rec.email || null,
-          emailVerificationStatus: rec.email ? 'verified' : 'not_applicable',
-          source: source || 'File Import',
-          scraperId: 'no-website-biz',
-          scraperName: `${source || 'File'} Import`,
-          website_status: rec.website ? 'Website Exists' : 'No Website',
-          opportunityType: rec.website ? 'Website Audit' : 'No Website',
-          scrapedAt: new Date().toISOString(),
-          lead_status: 'new'
-        }));
-
-        if (newLeads.length > 0) {
-          const res = storage.addLeadsBatch(newLeads);
-          data = {
-            inserted: res.saved,
-            duplicates: res.duplicates,
-            leads: newLeads
-          };
-        } else {
-          data = { inserted: validationResult?.summary?.valid || 0, duplicates: 0 };
-        }
-      }
-
-      setValidationResult((prev) => ({
-        ...prev,
-        commitResult: data,
-      }));
-      setStep(5);
-    } catch (err) {
-      alert(`Commit error: ${err.message}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const mappedCount = Object.values(mapping).filter((v) => v && v !== '').length;
-  const totalHeaders = previewData?.headers?.length || 0;
+  // Counts for Step 3
+  const validCount = processedRecords.filter(r => r.validationStatus === 'valid').length;
+  const duplicateCount = processedRecords.filter(r => r.validationStatus === 'duplicate').length;
+  const invalidCount = processedRecords.filter(r => r.validationStatus === 'invalid').length;
 
   return (
-    <div className="max-w-6xl w-full mx-auto font-sans pb-16">
-      
-      {/* ── Page Header (Exact Match to Reference Screenshot) ── */}
-      <div className="mb-6">
-        <h1 className="text-3xl font-extrabold text-[#111111] tracking-tight">
-          Import Leads
-        </h1>
-        <p className="text-sm text-[#8A8A8A] mt-1">
-          Bring high-quality leads into your workspace from multiple sources.
-        </p>
-      </div>
-
-      {/* ── Corporate 5-Step Pipeline Stepper ── */}
-      <div className="bg-[#F5F5F5] border border-[#E7E7E7] rounded-xl p-1.5 flex items-center gap-1.5 mb-8 overflow-x-auto shadow-2xs">
-        {stepLabels.map((label, idx) => {
-          const stepNum = idx + 1;
-          const isActive = step === stepNum;
-          const isCompleted = step > stepNum;
-          return (
-            <button
-              key={label}
-              onClick={() => { if (isCompleted) setStep(stepNum); }}
-              disabled={!isCompleted && !isActive}
-              className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
-                isActive
-                  ? 'bg-[#111111] text-white shadow-xs'
-                  : isCompleted
-                  ? 'bg-white text-[#111111] hover:bg-gray-100 cursor-pointer border border-[#E7E7E7]'
-                  : 'text-[#8A8A8A] cursor-not-allowed opacity-60'
-              }`}
-            >
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                isActive
-                  ? 'bg-[#EA4B0B] text-white'
-                  : isCompleted
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-[#E7E7E7] text-[#8A8A8A]'
-              }`}>
-                {isCompleted ? '✓' : `0${stepNum}`}
-              </span>
-              <span className="truncate">{label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ══════════════ STEP 1: Source Selection (Exact 3x2 Grid from Reference) ══════════════ */}
-      {step === 1 && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {sourceCards.map((card) => {
-              const isSelected = source === card.id;
-              return (
-                <div
-                  key={card.id}
-                  onClick={() => handleSourceSelect(card.id)}
-                  className={`bg-white border rounded-2xl p-6 sm:p-7 flex flex-col justify-between transition-all duration-200 cursor-pointer group hover:-translate-y-1 hover:shadow-lg ${
-                    isSelected
-                      ? 'border-2 border-[#EA4B0B] bg-[#FFFDFB] shadow-sm ring-1 ring-[#EA4B0B]/20'
-                      : 'border-[#E7E7E7] hover:border-[#111111] shadow-2xs'
-                  }`}
-                >
-                  {/* Top row: Icon squircle + Optional Popular Badge */}
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      {card.icon}
-                      {card.isPopular && (
-                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#FFF5F0] text-[#EA4B0B] border border-[#FFE2D5]">
-                          Popular
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Title & Description */}
-                    <h3 className="text-lg font-bold text-[#111111] tracking-tight group-hover:text-[#EA4B0B] transition-colors">
-                      {card.title}
-                    </h3>
-                    <p className="text-xs text-[#8A8A8A] leading-relaxed mt-1 mb-6">
-                      {card.description}
-                    </p>
-                  </div>
-
-                  {/* Bottom Footer: Lead type on left, Arrow CTA on right */}
-                  <div className="border-t border-[#F5F5F5] pt-4 flex items-center justify-between mt-auto">
-                    <div className="flex items-center gap-2 text-xs font-medium text-[#666666]">
-                      <User className="w-3.5 h-3.5 text-[#8A8A8A]" />
-                      <span>{card.leadType}</span>
-                    </div>
-
-                    <div className="w-7 h-7 rounded-full bg-transparent group-hover:bg-[#F5F5F5] flex items-center justify-center transition-all group-hover:translate-x-1">
-                      <ArrowRight className="w-4 h-4 text-[#111111] group-hover:text-[#EA4B0B] transition-colors" />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+    <div className="space-y-6 max-w-5xl mx-auto">
+      {/* Editorial Header */}
+      <div className="pb-4 border-b border-[#E7E7E7] flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-[#8A8A8A]">
+              Lead Ingestion Suite
+            </span>
+            <span className="w-1.5 h-1.5 rounded-full bg-[#EA4B0B]" />
+            <span className="text-[10px] font-mono text-[#EA4B0B] font-semibold">
+              3-Step Deduplicated Import
+            </span>
           </div>
-
-          {/* Pre-flight Info Banner */}
-          <div className="bg-[#F5F5F5] border border-[#E7E7E7] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
-            <div className="flex items-center gap-3">
-              <Sparkles className="w-4 h-4 text-[#EA4B0B] shrink-0" />
-              <span className="text-[#8A8A8A]">
-                Supported formats: <strong>CSV, Excel (.xlsx, .xls)</strong>, or direct manual records. Auto-mapped schema normalization on upload.
-              </span>
-            </div>
-            <button
-              onClick={() => handleSourceSelect('CSV / Excel')}
-              className="text-xs font-semibold text-[#111111] hover:text-[#EA4B0B] flex items-center gap-1 shrink-0 cursor-pointer"
-            >
-              <span>Quick Upload File</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-[#111111]">
+            Import Leads & Prospects
+          </h1>
+          <p className="text-xs text-[#8A8A8A] mt-1">
+            Upload CSV or Excel spreadsheets up to 10MB or enter records manually with cross-organization deduplication.
+          </p>
         </div>
-      )}
 
-      {/* ══════════════ STEP 2: Upload or Manual Form ══════════════ */}
-      {step === 2 && (
+        {/* Mode Switcher */}
+        <div className="flex items-center bg-[#F5F5F5] border border-[#E7E7E7] rounded-md p-0.5 text-xs font-mono">
+          <button
+            onClick={() => setMode('upload')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded transition-all cursor-pointer ${
+              mode === 'upload'
+                ? 'bg-white text-[#111111] font-semibold shadow-2xs'
+                : 'text-[#8A8A8A] hover:text-[#111111]'
+            }`}
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-[#EA4B0B]" />
+            <span>File Import</span>
+          </button>
+
+          <button
+            onClick={() => setMode('manual')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded transition-all cursor-pointer ${
+              mode === 'manual'
+                ? 'bg-white text-[#111111] font-semibold shadow-2xs'
+                : 'text-[#8A8A8A] hover:text-[#111111]'
+            }`}
+          >
+            <PenSquare className="w-3.5 h-3.5 text-[#EA4B0B]" />
+            <span>Manual Entry</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Mode 1: 3-Step File Import */}
+      {mode === 'upload' && (
         <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E7E7E7]">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <span className="text-xs font-mono uppercase tracking-wider text-[#8A8A8A]">Ingestion Target</span>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#111111] text-white">
-                  {source}
+          {/* 3 Steps Progress Bar */}
+          <div className="flex items-center justify-between border border-[#E7E7E7] bg-white rounded-lg p-3 text-xs font-mono">
+            {[
+              { num: 1, label: '1. Upload & Settings' },
+              { num: 2, label: '2. Column Mapping' },
+              { num: 3, label: '3. Review & Deduplicate' }
+            ].map((s) => (
+              <div key={s.num} className="flex items-center gap-2">
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                  currentStep === s.num 
+                    ? 'bg-[#EA4B0B] text-white' 
+                    : currentStep > s.num 
+                      ? 'bg-[#111111] text-white' 
+                      : 'bg-gray-100 text-gray-400'
+                }`}>
+                  {currentStep > s.num ? '✓' : s.num}
+                </span>
+                <span className={`font-semibold ${currentStep === s.num ? 'text-[#111111]' : 'text-gray-400'}`}>
+                  {s.label}
                 </span>
               </div>
-              <h2 className="text-xl font-bold text-[#111111] mt-1">
-                {source === 'Manual' ? 'Manual Lead Entry' : 'Upload Prospect Data File'}
-              </h2>
-            </div>
-
-            <button
-              onClick={() => setStep(1)}
-              className="text-xs font-semibold text-[#8A8A8A] hover:text-[#111111] transition-colors"
-            >
-              Change Source
-            </button>
+            ))}
           </div>
 
-          {source === 'Manual' ? (
-            /* Manual Lead Form */
-            <form onSubmit={handleManualSubmit} className="bg-white border border-[#E7E7E7] rounded-2xl p-6 sm:p-8 space-y-5 shadow-2xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
-                    Company Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Vanguard Logistics"
-                    value={manualForm.company_name}
-                    onChange={(e) => setManualForm({ ...manualForm, company_name: e.target.value })}
-                    className="w-full px-3 py-2 bg-[#F5F5F5] border border-[#E7E7E7] rounded-lg text-xs focus:bg-white focus:outline-none focus:border-[#111111]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
-                    Contact Full Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Sarah Jenkins"
-                    value={manualForm.name}
-                    onChange={(e) => setManualForm({ ...manualForm, name: e.target.value })}
-                    className="w-full px-3 py-2 bg-[#F5F5F5] border border-[#E7E7E7] rounded-lg text-xs focus:bg-white focus:outline-none focus:border-[#111111]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
-                    Job Title
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. VP of Operations"
-                    value={manualForm.job_title}
-                    onChange={(e) => setManualForm({ ...manualForm, job_title: e.target.value })}
-                    className="w-full px-3 py-2 bg-[#F5F5F5] border border-[#E7E7E7] rounded-lg text-xs focus:bg-white focus:outline-none focus:border-[#111111]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    placeholder="sarah@vanguard.com"
-                    value={manualForm.email}
-                    onChange={(e) => setManualForm({ ...manualForm, email: e.target.value })}
-                    className="w-full px-3 py-2 bg-[#F5F5F5] border border-[#E7E7E7] rounded-lg text-xs focus:bg-white focus:outline-none focus:border-[#111111]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
-                    Phone Number
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="+1 512 884 1029"
-                    value={manualForm.phone}
-                    onChange={(e) => setManualForm({ ...manualForm, phone: e.target.value })}
-                    className="w-full px-3 py-2 bg-[#F5F5F5] border border-[#E7E7E7] rounded-lg text-xs focus:bg-white focus:outline-none focus:border-[#111111]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
-                    Website URL
-                  </label>
-                  <input
-                    type="url"
-                    placeholder="https://vanguardops.com"
-                    value={manualForm.website}
-                    onChange={(e) => setManualForm({ ...manualForm, website: e.target.value })}
-                    className="w-full px-3 py-2 bg-[#F5F5F5] border border-[#E7E7E7] rounded-lg text-xs focus:bg-white focus:outline-none focus:border-[#111111]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
-                    City / Location
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Austin, TX"
-                    value={manualForm.city}
-                    onChange={(e) => setManualForm({ ...manualForm, city: e.target.value })}
-                    className="w-full px-3 py-2 bg-[#F5F5F5] border border-[#E7E7E7] rounded-lg text-xs focus:bg-white focus:outline-none focus:border-[#111111]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#111111] uppercase tracking-wider mb-1">
-                    Website Status
-                  </label>
-                  <select
-                    value={manualForm.website_status}
-                    onChange={(e) => setManualForm({ ...manualForm, website_status: e.target.value })}
-                    className="w-full px-3 py-2 bg-[#F5F5F5] border border-[#E7E7E7] rounded-lg text-xs focus:bg-white focus:outline-none"
-                  >
-                    <option value="Unknown">Unknown</option>
-                    <option value="No Website">No Website</option>
-                    <option value="Website Exists">Website Exists</option>
-                    <option value="Modern Website">Modern Website</option>
-                    <option value="Outdated Website">Outdated Website</option>
-                    <option value="Website Unreachable">Website Unreachable</option>
-                  </select>
-                </div>
+          {/* STEP 1: Upload File & Batch Configuration */}
+          {currentStep === 1 && (
+            <div className="bg-white border border-[#E7E7E7] rounded-xl p-6 space-y-6">
+              <div>
+                <h2 className="text-base font-bold text-[#111111]">Step 1: Choose File & Batch Settings</h2>
+                <p className="text-xs text-[#8A8A8A] mt-0.5">Upload a CSV, XLSX, or XLS file (max 10MB) and define default lead ownership and status.</p>
               </div>
 
-              <div className="flex items-center justify-between pt-4 border-t border-[#E7E7E7]">
-                <button
-                  type="button"
-                  onClick={() => setStep(1)}
-                  className="px-4 py-2 border border-[#E7E7E7] rounded-lg text-xs font-semibold text-[#111111] hover:bg-[#F5F5F5]"
-                >
-                  ← Back
-                </button>
-                <button
-                  type="submit"
-                  disabled={isProcessing}
-                  className="px-6 py-2 bg-[#EA4B0B] hover:bg-[#d03f07] text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
-                >
-                  {isProcessing ? 'Saving Lead...' : 'Create Lead Record →'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            /* File Upload Zone */
-            <div className="space-y-6">
-              <div
-                onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-                onDragLeave={() => setIsDragOver(false)}
-                onDrop={handleDrop}
+              {/* Drag & Drop File Zone */}
+              <div 
                 onClick={() => fileInputRef.current?.click()}
-                className={`bg-white border-2 border-dashed rounded-2xl p-10 sm:p-14 text-center cursor-pointer transition-all ${
-                  isDragOver
-                    ? 'border-[#EA4B0B] bg-[#FFF8F5]'
-                    : file
-                    ? 'border-emerald-500 bg-[#F0FDF4]'
-                    : 'border-[#E7E7E7] hover:border-[#111111] hover:bg-[#FAFAFA]'
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (e.dataTransfer.files?.[0]) handleFile(e.dataTransfer.files[0]);
+                }}
+                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+                  file ? 'border-emerald-500 bg-emerald-50/20' : 'border-[#E7E7E7] hover:border-gray-400 bg-[#FAFAFA]'
                 }`}
               >
-                <div className="w-14 h-14 rounded-2xl bg-[#111111] text-white flex items-center justify-center mx-auto mb-4 shadow-sm">
-                  <UploadCloud className="w-7 h-7 stroke-[1.75]" />
-                </div>
-
-                {file ? (
-                  <div>
-                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-[#111111] text-white rounded-full text-xs font-semibold shadow-sm">
-                      <FileText className="w-4 h-4 text-[#EA4B0B]" />
-                      <span>{file.name}</span>
-                      <span className="text-gray-400">({(file.size / 1024).toFixed(1)} KB)</span>
-                    </div>
-                    <p className="text-xs text-[#8A8A8A] mt-3">Click or drop another file to replace</p>
-                  </div>
-                ) : (
-                  <div>
-                    <h3 className="text-base font-bold text-[#111111]">
-                      Drop your spreadsheet file here, or <span className="text-[#EA4B0B] underline">browse files</span>
-                    </h3>
-                    <p className="text-xs text-[#8A8A8A] mt-1.5">
-                      Supports comma-separated .csv, Excel .xlsx, and .xls (up to 10MB)
-                    </p>
-                  </div>
-                )}
-
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept=".csv,.xlsx,.xls"
-                  onChange={handleFileChange}
+                  onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
                   className="hidden"
                 />
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-white border border-[#E7E7E7] flex items-center justify-center text-[#EA4B0B] shadow-2xs">
+                    <UploadCloud className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-[#111111]">
+                      {file ? file.name : 'Click to select or drag & drop spreadsheet'}
+                    </div>
+                    <div className="text-xs text-[#8A8A8A] mt-1 font-mono">
+                      {file ? `${(file.size / (1024 * 1024)).toFixed(2)} MB · Ready for mapping` : 'Supports CSV, XLSX, XLS up to 10MB'}
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {/* Instant Sample Data & Actions */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleLoadSampleData}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#F5F5F5] hover:bg-[#E7E7E7] text-[#111111] text-xs font-semibold rounded-lg border border-[#E7E7E7] transition-colors cursor-pointer"
+              {fileError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-xs text-red-700">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{fileError}</span>
+                </div>
+              )}
+
+              {/* Batch Configuration Form */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-[#E7E7E7]">
+                {/* Default Status */}
+                <div>
+                  <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1.5">
+                    Default Status:
+                  </label>
+                  <select
+                    value={defaultStatus}
+                    onChange={(e) => setDefaultStatus(e.target.value)}
+                    className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
                   >
-                    <Download className="w-3.5 h-3.5 text-[#EA4B0B]" />
-                    <span>Load 5 Sample {source} Leads</span>
-                  </button>
-                  <span className="text-xs text-[#8A8A8A]">Quick test without exporting real files</span>
+                    {PIPELINE_STAGES.map((stage) => (
+                      <option key={stage} value={stage.toLowerCase()}>
+                        {stage}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setStep(1)}
-                    className="px-4 py-2 border border-[#E7E7E7] rounded-lg text-xs font-semibold text-[#111111] hover:bg-[#F5F5F5]"
+                {/* Lead Owner Assignment */}
+                <div>
+                  <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1.5">
+                    Lead Owner Assignment:
+                  </label>
+                  <select
+                    value={ownerStrategy}
+                    onChange={(e) => setOwnerStrategy(e.target.value)}
+                    className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
                   >
-                    ← Back
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleUpload}
-                    disabled={!file || isProcessing}
-                    className={`px-6 py-2 rounded-lg text-xs font-semibold text-white shadow-sm transition-all ${
-                      !file || isProcessing
-                        ? 'bg-gray-300 cursor-not-allowed'
-                        : 'bg-[#111111] hover:bg-[#EA4B0B] cursor-pointer'
-                    }`}
-                  >
-                    {isProcessing ? 'Processing File...' : 'Upload & Map Columns →'}
-                  </button>
+                    <option value="unassigned">Unassigned</option>
+                    <option value="round-robin">Round-robin (Distribute across team reps)</option>
+                    <option value="location-rule">By Location Rule (Assign by Territory/City)</option>
+                    <optgroup label="Assign to Specific Member">
+                      {teamMembers.map((m) => (
+                        <option key={m.user_id} value={m.user_id}>
+                          {m.name} ({m.role})
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
                 </div>
+
+                {/* Tag */}
+                <div>
+                  <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1.5">
+                    Batch Tag:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Q4-Campaign, TechConference"
+                    value={batchTag}
+                    onChange={(e) => setBatchTag(e.target.value)}
+                    className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+                  />
+                </div>
+
+                {/* Source Label */}
+                <div>
+                  <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1.5">
+                    Source Label for this Batch:
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Inbound Form 2026, Apollo CSV"
+                    value={sourceLabel}
+                    onChange={(e) => setSourceLabel(e.target.value)}
+                    className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+                  />
+                </div>
+              </div>
+
+              {/* Action Button */}
+              <div className="flex justify-end pt-4 border-t border-[#E7E7E7]">
+                <button
+                  type="button"
+                  disabled={!file || isProcessing}
+                  onClick={handleProceedToMapping}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-[#EA4B0B] hover:bg-[#d03f07] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <span>{isProcessing ? 'Analyzing Spreadsheet...' : 'Continue to Column Mapping'}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2: Column Mapping */}
+          {currentStep === 2 && (
+            <div className="bg-white border border-[#E7E7E7] rounded-xl p-6 space-y-6">
+              <div className="flex items-center justify-between pb-4 border-b border-[#E7E7E7]">
+                <div>
+                  <h2 className="text-base font-bold text-[#111111]">Step 2: Map Columns</h2>
+                  <p className="text-xs text-[#8A8A8A] mt-0.5">
+                    Match your spreadsheet columns with GrowProspect system fields. You can manual remap or ignore columns.
+                  </p>
+                </div>
+                <span className="text-xs font-mono font-semibold px-2.5 py-1 bg-[#F5F5F5] rounded border border-[#E7E7E7]">
+                  {headers.length} Columns Found · {rawRows.length} Rows
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                <div className="grid grid-cols-12 gap-3 text-[11px] font-mono uppercase text-[#8A8A8A] font-bold px-3">
+                  <div className="col-span-5">File Column & Sample Value</div>
+                  <div className="col-span-2 text-center">Auto-Detected</div>
+                  <div className="col-span-5">Map to CRM System Field</div>
+                </div>
+
+                <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                  {headers.map((colName) => {
+                    const sampleVal = rawRows[0] ? rawRows[0][colName] : '';
+                    const mappedField = mapping[colName] || '';
+
+                    return (
+                      <div 
+                        key={colName}
+                        className="grid grid-cols-12 gap-3 items-center p-3 bg-[#FAFAFA] border border-[#E7E7E7] rounded-lg text-xs"
+                      >
+                        <div className="col-span-5">
+                          <div className="font-bold text-[#111111] truncate">{colName}</div>
+                          <div className="text-[11px] text-[#8A8A8A] font-mono truncate mt-0.5">
+                            Sample: {sampleVal ? `"${sampleVal}"` : <span className="italic">Empty</span>}
+                          </div>
+                        </div>
+
+                        <div className="col-span-2 text-center">
+                          {mappedField ? (
+                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-mono">
+                              Mapped
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-[10px] font-mono">
+                              Ignored
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="col-span-5">
+                          <select
+                            value={mappedField}
+                            onChange={(e) => setMapping(prev => ({ ...prev, [colName]: e.target.value }))}
+                            className={`w-full p-2 text-xs rounded border focus:outline-none ${
+                              mappedField ? 'bg-white border-[#111111] font-semibold text-[#111111]' : 'bg-gray-100 border-[#E7E7E7] text-gray-500'
+                            }`}
+                          >
+                            {SYSTEM_FIELDS.map((sf) => (
+                              <option key={sf.value} value={sf.value}>
+                                {sf.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between pt-4 border-t border-[#E7E7E7]">
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(1)}
+                  className="flex items-center gap-2 px-4 py-2 border border-[#E7E7E7] rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Back to Upload</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleProceedToReview}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-[#EA4B0B] hover:bg-[#d03f07] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                >
+                  <span>Continue to Review & Deduplicate</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 3: Review, Deduplication & Error File Download */}
+          {currentStep === 3 && (
+            <div className="bg-white border border-[#E7E7E7] rounded-xl p-6 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E7E7E7]">
+                <div>
+                  <h2 className="text-base font-bold text-[#111111]">Step 3: Review Validation & Deduplication</h2>
+                  <p className="text-xs text-[#8A8A8A] mt-0.5">
+                    Deduplicated across the whole organization by email, phone, and normalized domain.
+                  </p>
+                </div>
+
+                {/* Counts Badges */}
+                <div className="flex items-center gap-2 font-mono text-xs">
+                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-semibold">
+                    {validCount} Valid
+                  </span>
+                  <span className="px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded font-semibold">
+                    {duplicateCount} Duplicate
+                  </span>
+                  <span className="px-2.5 py-1 bg-red-50 text-red-700 border border-red-200 rounded font-semibold">
+                    {invalidCount} Invalid
+                  </span>
+                </div>
+              </div>
+
+              {/* Duplicate Handling Control */}
+              <div className="p-4 bg-[#F9F9F9] border border-[#E7E7E7] rounded-xl space-y-3">
+                <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider">
+                  Duplicate Handling Strategy:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { id: 'skip', title: 'Skip Duplicates', desc: 'Do not import matching rows (Safe)' },
+                    { id: 'update', title: 'Update Existing', desc: 'Enrich & merge into existing leads' },
+                    { id: 'import-anyway', title: 'Import Anyway', desc: 'Create new leads regardless' }
+                  ].map((opt) => (
+                    <label
+                      key={opt.id}
+                      className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                        duplicateHandling === opt.id
+                          ? 'border-[#EA4B0B] bg-orange-50/20 font-semibold'
+                          : 'border-[#E7E7E7] bg-white hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="dupChoice"
+                          value={opt.id}
+                          checked={duplicateHandling === opt.id}
+                          onChange={(e) => setDuplicateHandling(e.target.value)}
+                          className="accent-[#EA4B0B]"
+                        />
+                        <span className="text-xs text-[#111111]">{opt.title}</span>
+                      </div>
+                      <p className="text-[11px] text-[#8A8A8A] mt-1 pl-5">{opt.desc}</p>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Row Preview Table */}
+              <div className="border border-[#E7E7E7] rounded-lg overflow-hidden">
+                <div className="p-3 bg-[#FAFAFA] border-b border-[#E7E7E7] flex items-center justify-between text-xs">
+                  <span className="font-bold text-[#111111]">Sample Rows Preview (First 10 of {processedRecords.length})</span>
+                  {(duplicateCount > 0 || invalidCount > 0) && (
+                    <button
+                      onClick={handleDownloadErrorFile}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-gray-50 border border-[#E7E7E7] rounded text-xs font-mono text-gray-700 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-[#EA4B0B]" />
+                      <span>Download Error / Duplicate File ({duplicateCount + invalidCount})</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="overflow-x-auto max-h-[300px]">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#F5F5F5] border-b border-[#E7E7E7] font-mono text-[11px] text-[#8A8A8A]">
+                      <tr>
+                        <th className="p-2.5">Row</th>
+                        <th className="p-2.5">Status</th>
+                        <th className="p-2.5">Company</th>
+                        <th className="p-2.5">Contact</th>
+                        <th className="p-2.5">Email</th>
+                        <th className="p-2.5">Phone</th>
+                        <th className="p-2.5">Location</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E7E7E7]">
+                      {processedRecords.slice(0, 10).map((r) => (
+                        <tr key={r.rowIndex} className="hover:bg-gray-50">
+                          <td className="p-2.5 font-mono text-[11px] text-gray-500">{r.rowIndex}</td>
+                          <td className="p-2.5">
+                            {r.validationStatus === 'valid' && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                Valid
+                              </span>
+                            )}
+                            {r.validationStatus === 'duplicate' && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-50 text-amber-700 border border-amber-200" title={r.dupReason}>
+                                Duplicate
+                              </span>
+                            )}
+                            {r.validationStatus === 'invalid' && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-red-50 text-red-700 border border-red-200" title={r.errorReason}>
+                                Invalid
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2.5 font-medium text-[#111111]">{r.company_name || '—'}</td>
+                          <td className="p-2.5 text-gray-600">{r.name || '—'}</td>
+                          <td className="p-2.5 text-gray-600 font-mono text-[11px]">{r.email || '—'}</td>
+                          <td className="p-2.5 text-gray-600 font-mono text-[11px]">{r.phone || '—'}</td>
+                          <td className="p-2.5 text-gray-600">{r.city ? `${r.city}, ${r.country || 'US'}` : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between pt-4 border-t border-[#E7E7E7]">
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(2)}
+                  className="flex items-center gap-2 px-4 py-2 border border-[#E7E7E7] rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Back to Mapping</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isProcessing || (validCount === 0 && duplicateHandling === 'skip')}
+                  onClick={handleCommitImport}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-[#EA4B0B] hover:bg-[#d03f07] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{isProcessing ? 'Importing Leads...' : `Confirm Import (${validCount + (duplicateHandling !== 'skip' ? duplicateCount : 0)} Leads)`}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 4: Finish Summary Screen */}
+          {currentStep === 4 && summary && (
+            <div className="bg-white border border-[#E7E7E7] rounded-xl p-8 text-center space-y-6">
+              <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 mx-auto shadow-2xs">
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+
+              <div>
+                <h2 className="text-xl font-bold text-[#111111]">Batch Import Successfully Completed</h2>
+                <p className="text-xs text-[#8A8A8A] mt-1 font-mono">
+                  Batch identifier: <strong>{summary.batchId}</strong>
+                </p>
+              </div>
+
+              {/* Summary Stats Grid */}
+              <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto font-mono">
+                <div className="p-4 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg">
+                  <div className="text-2xl font-bold text-[#111111]">{summary.importedCount}</div>
+                  <div className="text-[11px] text-[#8A8A8A] mt-1">Leads Created</div>
+                </div>
+
+                <div className="p-4 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg">
+                  <div className="text-2xl font-bold text-[#111111]">{summary.updatedCount}</div>
+                  <div className="text-[11px] text-[#8A8A8A] mt-1">Existing Updated</div>
+                </div>
+
+                <div className="p-4 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg">
+                  <div className="text-2xl font-bold text-[#111111]">{summary.skippedCount}</div>
+                  <div className="text-[11px] text-[#8A8A8A] mt-1">Skipped / Invalid</div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-center gap-4 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFile(null);
+                    setCurrentStep(1);
+                    setSummary(null);
+                  }}
+                  className="px-5 py-2.5 border border-[#E7E7E7] rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer"
+                >
+                  Import Another Batch
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Navigate to Leads filtered by batch
+                    if (onViewLeads) {
+                      onViewLeads(summary.batchId);
+                    } else {
+                      window.location.hash = '#leads';
+                    }
+                  }}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-[#EA4B0B] hover:bg-[#d03f07] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                >
+                  <span>View Imported Leads</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
               </div>
             </div>
           )}
         </div>
       )}
 
-      {/* ══════════════ STEP 3: Column Mapping ══════════════ */}
-      {step === 3 && previewData && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E7E7E7]">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono uppercase text-[#8A8A8A]">Active Session</span>
-                <span className="font-mono text-xs font-bold text-[#111111] bg-[#F5F5F5] px-2 py-0.5 rounded border border-[#E7E7E7]">
-                  {previewData.filename}
-                </span>
-              </div>
-              <h2 className="text-xl font-bold text-[#111111] mt-1">
-                Column Entity Mapping
-              </h2>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-[#111111] bg-white border border-[#E7E7E7] px-3 py-1 rounded-full shadow-2xs">
-                {mappedCount} of {totalHeaders} columns mapped
-              </span>
-            </div>
-          </div>
-
-          <div className="bg-white border border-[#E7E7E7] rounded-2xl overflow-hidden shadow-2xs">
-            <table className="w-full border-collapse text-left text-xs">
-              <thead>
-                <tr className="bg-[#F5F5F5] border-b border-[#E7E7E7] text-[10px] font-mono uppercase tracking-wider text-[#8A8A8A]">
-                  <th className="py-3.5 px-6">File Column Header</th>
-                  <th className="py-3.5 px-6">System Lead Attribute</th>
-                  <th className="py-3.5 px-6">Sample Value (Row 1)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#F5F5F5]">
-                {previewData.headers.map((header, idx) => (
-                  <tr key={idx} className="hover:bg-[#FAFAFA] transition-colors">
-                    <td className="py-3.5 px-6 font-mono font-bold text-[#111111]">
-                      <span className="bg-[#F5F5F5] border border-[#E7E7E7] px-2.5 py-1 rounded-md">
-                        {header}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-6">
-                      <select
-                        value={mapping[header] || ''}
-                        onChange={(e) => handleMappingChange(header, e.target.value)}
-                        className={`w-full max-w-xs px-3 py-1.5 rounded-lg border text-xs font-medium focus:outline-none ${
-                          mapping[header]
-                            ? 'border-emerald-300 bg-emerald-50 text-emerald-900 font-semibold'
-                            : 'border-[#E7E7E7] bg-white text-gray-500'
-                        }`}
-                      >
-                        {systemFields.map((f) => (
-                          <option key={f.value} value={f.value}>{f.label}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="py-3.5 px-6 font-mono text-[#8A8A8A] max-w-xs truncate">
-                      {previewData.preview.length > 0 ? previewData.preview[0][header] : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex items-center justify-between pt-2">
-            <button
-              onClick={() => setStep(2)}
-              className="px-4 py-2 border border-[#E7E7E7] rounded-lg text-xs font-semibold text-[#111111] hover:bg-[#F5F5F5]"
-            >
-              ← Back
-            </button>
-            <button
-              onClick={handleValidate}
-              disabled={isProcessing}
-              className="px-6 py-2 bg-[#EA4B0B] hover:bg-[#d03f07] text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
-            >
-              {isProcessing ? 'Validating Batch...' : 'Validate & Inspect Records →'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ══════════════ STEP 4: Validation Results ══════════════ */}
-      {step === 4 && validationResult && (
-        <div className="space-y-6">
+      {/* Mode 2: Manual Single-Lead Entry */}
+      {mode === 'manual' && (
+        <form onSubmit={handleManualSubmit} className="bg-white border border-[#E7E7E7] rounded-xl p-6 space-y-6">
           <div className="pb-4 border-b border-[#E7E7E7]">
-            <h2 className="text-xl font-bold text-[#111111]">
-              Validation & Quality Audit
-            </h2>
-            <p className="text-xs text-[#8A8A8A] mt-1">
-              Verify detected duplicates and schema conformity prior to database persistence.
+            <h2 className="text-base font-bold text-[#111111]">Manual Single-Lead Entry</h2>
+            <p className="text-xs text-[#8A8A8A] mt-0.5">
+              Enter individual prospect records with immediate deduplication verification across your organization.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-[#111111] text-white rounded-2xl p-6 shadow-sm">
-              <div className="text-[10px] font-mono uppercase text-gray-400">Total Scanned</div>
-              <div className="text-4xl font-extrabold font-mono mt-2 tracking-tight">
-                {validationResult.summary.total}
-              </div>
-              <div className="text-xs text-gray-400 mt-1">Rows in uploaded dataset</div>
-            </div>
-
-            <div className="bg-white border border-[#E7E7E7] rounded-2xl p-6 shadow-2xs">
-              <div className="text-[10px] font-mono uppercase text-emerald-700">Valid Leads Ready</div>
-              <div className="text-4xl font-extrabold font-mono text-emerald-600 mt-2 tracking-tight">
-                {validationResult.summary.valid}
-              </div>
-              <div className="text-xs text-[#8A8A8A] mt-1">Qualified for immediate insertion</div>
-            </div>
-
-            <div className="bg-white border border-[#E7E7E7] rounded-2xl p-6 shadow-2xs">
-              <div className="text-[10px] font-mono uppercase text-[#EA4B0B]">Errors / Invalid</div>
-              <div className="text-4xl font-extrabold font-mono text-[#EA4B0B] mt-2 tracking-tight">
-                {validationResult.summary.invalid}
-              </div>
-              <div className="text-xs text-[#8A8A8A] mt-1">Missing required entity keys</div>
-            </div>
-          </div>
-
-          {validationResult.invalidRows && validationResult.invalidRows.length > 0 && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-5 space-y-2">
-              <div className="flex items-center gap-2 text-red-800 font-semibold text-xs">
-                <AlertCircle className="w-4 h-4 text-red-600" />
-                <span>Detected Validation Warnings</span>
-              </div>
-              <div className="max-h-48 overflow-y-auto space-y-1 font-mono text-[11px] text-red-700">
-                {validationResult.invalidRows.map((err, idx) => (
-                  <div key={idx}>Row {err.row}: {err.errors}</div>
-                ))}
-              </div>
+          {manualMessage && (
+            <div className={`p-3 rounded-lg flex items-center gap-2 text-xs ${
+              manualMessage.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'
+            }`}>
+              {manualMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+              <span>{manualMessage.text}</span>
             </div>
           )}
 
-          <div className="flex items-center justify-between pt-2">
-            <button
-              onClick={() => setStep(3)}
-              className="px-4 py-2 border border-[#E7E7E7] rounded-lg text-xs font-semibold text-[#111111] hover:bg-[#F5F5F5]"
-            >
-              ← Reconfigure Mapping
-            </button>
-            <button
-              onClick={handleCommit}
-              disabled={validationResult.summary.valid === 0 || isProcessing}
-              className={`px-6 py-2 rounded-lg text-xs font-semibold text-white shadow-sm transition-all ${
-                validationResult.summary.valid === 0 || isProcessing
-                  ? 'bg-gray-300 cursor-not-allowed'
-                  : 'bg-[#111111] hover:bg-[#EA4B0B] cursor-pointer'
-              }`}
-            >
-              {isProcessing ? 'Committing Leads...' : `Finalize & Ingest ${validationResult.summary.valid} Leads →`}
-            </button>
-          </div>
-        </div>
-      )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                Company Name *
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="Acme Innovations Inc"
+                value={manualForm.company_name}
+                onChange={(e) => setManualForm(prev => ({ ...prev, company_name: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              />
+            </div>
 
-      {/* ══════════════ STEP 5: Import Complete ══════════════ */}
-      {step === 5 && validationResult && (
-        <div className="bg-white border border-[#E7E7E7] rounded-2xl p-8 sm:p-12 text-center max-w-xl mx-auto shadow-sm space-y-6">
-          <div className="w-16 h-16 rounded-full bg-[#FFF5F0] border border-[#FFE2D5] flex items-center justify-center mx-auto text-[#EA4B0B]">
-            <CheckCircle2 className="w-9 h-9 stroke-[2.25]" />
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                Contact Person *
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="Jane Smith"
+                value={manualForm.name}
+                onChange={(e) => setManualForm(prev => ({ ...prev, name: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                Email Address
+              </label>
+              <input
+                type="email"
+                placeholder="jane@acme.com"
+                value={manualForm.email}
+                onChange={(e) => setManualForm(prev => ({ ...prev, email: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                Phone Number
+              </label>
+              <input
+                type="tel"
+                placeholder="+1 (555) 019-2834"
+                value={manualForm.phone}
+                onChange={(e) => setManualForm(prev => ({ ...prev, phone: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                Website
+              </label>
+              <input
+                type="text"
+                placeholder="https://acme.com"
+                value={manualForm.website}
+                onChange={(e) => setManualForm(prev => ({ ...prev, website: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                City / Location
+              </label>
+              <input
+                type="text"
+                placeholder="San Francisco, CA"
+                value={manualForm.city}
+                onChange={(e) => setManualForm(prev => ({ ...prev, city: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                Status
+              </label>
+              <select
+                value={manualForm.status}
+                onChange={(e) => setManualForm(prev => ({ ...prev, status: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              >
+                {PIPELINE_STAGES.map((s) => (
+                  <option key={s} value={s.toLowerCase()}>{s}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                Owner
+              </label>
+              <select
+                value={manualForm.owner_id}
+                onChange={(e) => setManualForm(prev => ({ ...prev, owner_id: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              >
+                <option value="">Unassigned</option>
+                {teamMembers.map((m) => (
+                  <option key={m.user_id} value={m.user_id}>{m.name} ({m.role})</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                Deal Value ($)
+              </label>
+              <input
+                type="number"
+                placeholder="25000"
+                value={manualForm.deal_value}
+                onChange={(e) => setManualForm(prev => ({ ...prev, deal_value: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+                Tags (Comma-separated)
+              </label>
+              <input
+                type="text"
+                placeholder="SaaS, Enterprise, Referral"
+                value={manualForm.tags}
+                onChange={(e) => setManualForm(prev => ({ ...prev, tags: e.target.value }))}
+                className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+              />
+            </div>
           </div>
 
           <div>
-            <h2 className="text-2xl font-extrabold text-[#111111] tracking-tight">
-              Ingestion Run Complete
-            </h2>
-            <p className="text-xs text-[#8A8A8A] mt-2 max-w-sm mx-auto">
-              Your leads have been normalized, checked against deduplication hash indexes, and committed to PostgreSQL storage.
-            </p>
+            <label className="block text-xs font-mono font-bold text-[#111111] uppercase tracking-wider mb-1">
+              Internal Notes
+            </label>
+            <textarea
+              rows={2}
+              placeholder="Initial lead context, pain points or next actions..."
+              value={manualForm.notes}
+              onChange={(e) => setManualForm(prev => ({ ...prev, notes: e.target.value }))}
+              className="w-full text-xs p-2.5 bg-[#F9F9F9] border border-[#E7E7E7] rounded-lg focus:outline-none focus:border-[#111111]"
+            />
           </div>
 
-          <div className="grid grid-cols-2 gap-3 bg-[#F5F5F5] p-4 rounded-xl border border-[#E7E7E7] text-left">
-            <div>
-              <div className="text-[10px] font-mono uppercase text-[#8A8A8A]">New Records Inserted</div>
-              <div className="text-2xl font-bold font-mono text-emerald-600">
-                {validationResult.commitResult?.inserted ?? 1}
-              </div>
-            </div>
-            <div>
-              <div className="text-[10px] font-mono uppercase text-[#8A8A8A]">Duplicates Deduplicated</div>
-              <div className="text-2xl font-bold font-mono text-[#EA4B0B]">
-                {validationResult.commitResult?.duplicates ?? 0}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-center gap-3 pt-2">
+          <div className="flex justify-end pt-4 border-t border-[#E7E7E7]">
             <button
-              onClick={() => {
-                setStep(1);
-                setFile(null);
-                setPreviewData(null);
-                setValidationResult(null);
-                setSource('Google Maps');
-              }}
-              className="px-5 py-2.5 bg-[#111111] hover:bg-[#EA4B0B] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer shadow-sm"
+              type="submit"
+              disabled={manualSubmitting}
+              className="px-6 py-2.5 bg-[#EA4B0B] hover:bg-[#d03f07] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
             >
-              Import Another Source
+              {manualSubmitting ? 'Saving Lead...' : 'Create Lead'}
             </button>
           </div>
-        </div>
+        </form>
       )}
-
     </div>
   );
 }

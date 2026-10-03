@@ -186,7 +186,7 @@ export async function handleImportValidate({ importSessionId, mapping = {} }) {
 }
 
 // 3. Commit
-export async function handleImportCommit({ importSessionId }, leadsStore = []) {
+export async function handleImportCommit({ importSessionId, orgId = 'org_default' }, leadsStore = []) {
   const session = importSessions.get(importSessionId);
   if (!session) {
     throw new Error('Import session expired. Please re-upload your file.');
@@ -202,7 +202,9 @@ export async function handleImportCommit({ importSessionId }, leadsStore = []) {
   const savedLeads = [];
 
   const existingSignatures = new Set(
-    leadsStore.map(l => `${(l.name || l.company_name || '').toLowerCase().trim()}|${(l.location || l.city || '').toLowerCase().trim()}`)
+    leadsStore
+      .filter(l => !l.org_id || l.org_id === orgId)
+      .map(l => `${(l.name || l.company_name || '').toLowerCase().trim()}|${(l.location || l.city || '').toLowerCase().trim()}`)
   );
 
   // DB client check
@@ -230,6 +232,7 @@ export async function handleImportCommit({ importSessionId }, leadsStore = []) {
 
     const leadObject = {
       id: `lead-import-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      org_id: orgId,
       name,
       company_name: name,
       category: rec.category || rec.industry || 'Commercial Services',
@@ -247,7 +250,12 @@ export async function handleImportCommit({ importSessionId }, leadsStore = []) {
       website_status: rec.website ? 'Website Exists' : 'No Website',
       opportunityType: rec.website ? 'Website Audit' : 'No Website',
       scrapedAt: new Date().toISOString(),
-      lead_status: 'new'
+      lead_status: 'new',
+      pipeline_stage: 'New',
+      deal_value: 0,
+      assigned_to: null,
+      assigned_to_name: null,
+      last_activity_at: new Date().toISOString()
     };
 
     leadsStore.unshift(leadObject);
@@ -259,9 +267,10 @@ export async function handleImportCommit({ importSessionId }, leadsStore = []) {
       try {
         await client.query(`
           INSERT INTO leads (
-            name, company_name, category, email, phone, website, address, city, state, country, source, website_status, lead_status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            org_id, name, company_name, category, email, phone, website, address, city, state, country, source, website_status, lead_status, pipeline_stage
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         `, [
+          orgId,
           leadObject.name,
           leadObject.company_name,
           leadObject.category,
@@ -274,7 +283,8 @@ export async function handleImportCommit({ importSessionId }, leadsStore = []) {
           leadObject.country,
           leadObject.source,
           leadObject.website_status,
-          leadObject.lead_status
+          leadObject.lead_status,
+          leadObject.pipeline_stage
         ]);
       } catch (dbErr) {
         console.warn('[DB Lead Insert Error]:', dbErr.message);

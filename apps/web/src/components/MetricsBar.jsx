@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { sessionManager } from '../services/sessionManager';
 import { 
   Database, 
   Activity, 
@@ -31,7 +32,7 @@ export default function MetricsBar({
   const fetchBackendAnalytics = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`http://localhost:3001/api/analytics?timeFilter=${timeFilter}`);
+      const res = await sessionManager.authFetch(`http://localhost:3001/api/analytics?timeFilter=${timeFilter}`);
       if (res.ok) {
         const json = await res.json();
         if (json.success && json.metrics) {

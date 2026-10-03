@@ -110,22 +110,47 @@ export default function RunsView({ runs, onPauseRun, onStopRun, onRerun }) {
 
       {/* Runs List */}
       <div className="space-y-3">
-        {filteredRuns.map((run) => {
-          const isExpanded = expandedRunId === run.id;
-          const isRunning = run.status === 'running';
-
-          return (
-            <div 
-              key={run.id}
-              className={`rounded-lg border bg-white transition-all overflow-hidden ${
-                isRunning ? 'border-[#EA4B0B] ring-1 ring-[#EA4B0B]/20' : 'border-[#E7E7E7]'
-              }`}
-            >
-              {/* Row Bar */}
-              <div 
-                className="p-4 flex flex-wrap items-center justify-between gap-4 cursor-pointer hover:bg-[#FAFAFA] transition-colors"
-                onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
+        {filteredRuns.length === 0 ? (
+          <div className="p-12 bg-white border border-[#E7E7E7] rounded-xl text-center space-y-3 shadow-xs">
+            <div className="w-12 h-12 rounded-full bg-[#F5F5F5] border border-[#E7E7E7] flex items-center justify-center mx-auto text-[#8A8A8A]">
+              <Terminal className="w-6 h-6 text-[#8A8A8A]" />
+            </div>
+            <div>
+              <p className="text-base font-bold text-[#111111]">
+                {runs.length === 0 ? 'No scraper runs executed yet' : 'No matching run history'}
+              </p>
+              <p className="text-xs text-[#8A8A8A] mt-1 max-w-sm mx-auto">
+                {runs.length === 0
+                  ? 'Launch an automated scraper engine from the Engines tab to start discovering qualified leads.'
+                  : 'Try clearing your search query or status filter to view older runs.'}
+              </p>
+            </div>
+            <div>
+              <button
+                onClick={() => { setSearch(''); setFilterStatus('ALL'); }}
+                className="px-4 py-2 bg-[#EA4B0B] hover:bg-[#d03f07] text-white text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer"
               >
+                Reset Run Filters
+              </button>
+            </div>
+          </div>
+        ) : (
+          filteredRuns.map((run) => {
+            const isExpanded = expandedRunId === run.id;
+            const isRunning = run.status === 'running';
+
+            return (
+              <div 
+                key={run.id}
+                className={`rounded-lg border bg-white transition-all overflow-hidden ${
+                  isRunning ? 'border-[#EA4B0B] ring-1 ring-[#EA4B0B]/20' : 'border-[#E7E7E7]'
+                }`}
+              >
+                {/* Row Bar */}
+                <div 
+                  className="p-4 flex flex-wrap items-center justify-between gap-4 cursor-pointer hover:bg-[#FAFAFA] transition-colors"
+                  onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
+                >
                 <div className="flex items-center gap-3">
                   <span className="font-mono font-bold text-xs text-[#111111] bg-[#F5F5F5] px-2 py-1 rounded border border-[#E7E7E7]">
                     #{run.id}
@@ -264,7 +289,7 @@ export default function RunsView({ runs, onPauseRun, onStopRun, onRerun }) {
               )}
             </div>
           );
-        })}
+        }))}
       </div>
     </div>
   );
