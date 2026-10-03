@@ -159,18 +159,33 @@ export const crmService = {
    * Get team members in the current organization
    */
   async getTeamMembers(orgId) {
-    const targetOrgId = orgId || sessionManager.getOrgId();
+    const targetOrgId = orgId || sessionManager.getOrgId() || 'org_default';
     try {
       const res = await sessionManager.authFetch(`${API_URL}/api/crm/team?org_id=${encodeURIComponent(targetOrgId)}`);
       if (res.ok) {
         const data = await res.json();
-        return data.members || [];
+        if (Array.isArray(data.members)) {
+          localStorage.setItem(`growprospect_team_${targetOrgId}`, JSON.stringify(data.members));
+          return data.members;
+        }
       }
     } catch {
-      // fallback
+      // fallback to localStorage
     }
 
-    return [
+    // Check if team members list exists in localStorage (including empty [])
+    const local = localStorage.getItem(`growprospect_team_${targetOrgId}`);
+    if (local !== null) {
+      try {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      } catch {}
+    }
+
+    // Initial default seed if never accessed or modified before
+    const initialList = [
       {
         user_id: 'usr_admin_1',
         name: 'Alex Rivera',
@@ -193,6 +208,8 @@ export const crmService = {
         org_id: targetOrgId
       }
     ];
+    localStorage.setItem(`growprospect_team_${targetOrgId}`, JSON.stringify(initialList));
+    return initialList;
   },
 
   /**
@@ -414,30 +431,34 @@ export const crmService = {
    * Invite new team member
    */
   async inviteTeamMember({ name, email, role = 'rep' }) {
-    const orgId = sessionManager.getOrgId();
-    try {
-      const res = await sessionManager.authFetch(`${API_URL}/api/crm/team/invite`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, role, org_id: orgId })
-      });
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch {
-      // Local fallback
-    }
-
-    const current = await this.getTeamMembers();
+    const orgId = sessionManager.getOrgId() || 'org_default';
     const newMember = {
       user_id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name,
       email,
       role,
-      org_id: orgId
+      org_id: orgId,
+      created_at: new Date().toISOString()
     };
+
+    const current = await this.getTeamMembers(orgId);
     const updated = [...current, newMember];
     localStorage.setItem(`growprospect_team_${orgId}`, JSON.stringify(updated));
+
+    try {
+      const res = await sessionManager.authFetch(`${API_URL}/api/crm/team`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, role, org_id: orgId })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data;
+      }
+    } catch {
+      // Local storage already updated
+    }
+
     return { success: true, member: newMember };
   },
 
@@ -445,7 +466,11 @@ export const crmService = {
    * Update team member role (Admin only)
    */
   async updateMemberRole(userId, newRole) {
-    const orgId = sessionManager.getOrgId();
+    const orgId = sessionManager.getOrgId() || 'org_default';
+    const current = await this.getTeamMembers(orgId);
+    const updated = current.map(m => (m.user_id === userId || m.id === userId) ? { ...m, role: newRole } : m);
+    localStorage.setItem(`growprospect_team_${orgId}`, JSON.stringify(updated));
+
     try {
       const res = await sessionManager.authFetch(`${API_URL}/api/crm/team/${encodeURIComponent(userId)}/role`, {
         method: 'PATCH',
@@ -456,12 +481,9 @@ export const crmService = {
         return await res.json();
       }
     } catch {
-      // Local fallback
+      // Local storage already updated
     }
 
-    const current = await this.getTeamMembers();
-    const updated = current.map(m => m.user_id === userId ? { ...m, role: newRole } : m);
-    localStorage.setItem(`growprospect_team_${orgId}`, JSON.stringify(updated));
     return { success: true };
   },
 
@@ -469,7 +491,11 @@ export const crmService = {
    * Delete team member (Admin only)
    */
   async deleteTeamMember(userId) {
-    const orgId = sessionManager.getOrgId();
+    const orgId = sessionManager.getOrgId() || 'org_default';
+    const current = await this.getTeamMembers(orgId);
+    const updated = current.filter(m => m.user_id !== userId && m.id !== userId);
+    localStorage.setItem(`growprospect_team_${orgId}`, JSON.stringify(updated));
+
     try {
       const res = await sessionManager.authFetch(`${API_URL}/api/crm/team/${encodeURIComponent(userId)}`, {
         method: 'DELETE'
@@ -478,12 +504,9 @@ export const crmService = {
         return await res.json();
       }
     } catch {
-      // Local fallback
+      // Local storage already updated
     }
 
-    const current = await this.getTeamMembers();
-    const updated = current.filter(m => m.user_id !== userId);
-    localStorage.setItem(`growprospect_team_${orgId}`, JSON.stringify(updated));
     return { success: true };
   },
 

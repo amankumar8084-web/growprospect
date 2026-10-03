@@ -220,14 +220,25 @@ describe('Step 4: Pipeline Kanban & Status-Change Rules', () => {
     test('Accurately flags overdue follow-up dates in orange', () => {
       const checkOverdue = (nextFollowupStr) => {
         if (!nextFollowupStr) return false;
+        const [y, m, d] = nextFollowupStr.split('-').map(Number);
+        const target = new Date(y, m - 1, d);
+        target.setHours(0, 0, 0, 0);
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        return new Date(nextFollowupStr).setHours(0, 0, 0, 0) < today.getTime();
+        return target.getTime() < today.getTime();
       };
 
-      const pastDate = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10); // 2 days ago
-      const futureDate = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10); // 5 days ahead
-      const todayDate = new Date().toISOString().slice(0, 10);
+      const formatLocalDate = (d) => {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+
+      const now = new Date();
+      const pastDate = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2)); // 2 days ago
+      const futureDate = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 5)); // 5 days ahead
+      const todayDate = formatLocalDate(now);
 
       assert.strictEqual(checkOverdue(pastDate), true);    // Overdue -> orange
       assert.strictEqual(checkOverdue(futureDate), false); // Future -> normal

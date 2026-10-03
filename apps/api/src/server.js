@@ -351,7 +351,10 @@ const server = http.createServer(async (req, res) => {
       requireRole('admin')(req);
       const targetUserId = decodeURIComponent(teamRoleMatch[1]);
       const body = await parseJsonBody(req);
-      const member = crmTeamStore.find(m => (m.user_id === targetUserId || m.id === targetUserId) && m.org_id === req.auth.orgId);
+      const member = crmTeamStore.find(m => 
+        (m.user_id === targetUserId || m.id === targetUserId) && 
+        ((m.org_id || 'org_default') === (req.auth.orgId || 'org_default'))
+      );
       if (member) {
         member.role = normalizeRole(body.role || 'rep');
       }
@@ -364,7 +367,10 @@ const server = http.createServer(async (req, res) => {
     if (teamDeleteMatch && req.method === 'DELETE') {
       requireRole('admin')(req);
       const targetUserId = decodeURIComponent(teamDeleteMatch[1]);
-      const idx = crmTeamStore.findIndex(m => (m.user_id === targetUserId || m.id === targetUserId) && m.org_id === req.auth.orgId);
+      const idx = crmTeamStore.findIndex(m => 
+        (m.user_id === targetUserId || m.id === targetUserId) && 
+        ((m.org_id || 'org_default') === (req.auth.orgId || 'org_default'))
+      );
       if (idx !== -1) {
         crmTeamStore.splice(idx, 1);
       }

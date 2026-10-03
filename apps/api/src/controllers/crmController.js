@@ -221,7 +221,8 @@ export async function getLeadActivities({ leadId, orgId }) {
  * Get organization team members
  */
 export async function getOrgTeamMembers(orgId) {
-  return crmTeamStore.filter((m) => (m.org_id || 'org_default') === orgId);
+  const targetOrgId = orgId || 'org_default';
+  return crmTeamStore.filter((m) => (m.org_id || 'org_default') === targetOrgId);
 }
 
 // In-memory Tasks Store
